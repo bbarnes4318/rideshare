@@ -126,6 +126,8 @@ const formHandler = async (req, res) => {
       // Device info
       device_info: {
         family: agent.device.family || 'Unknown',
+        brand: agent.device.brand || 'Unknown',
+        model: agent.device.model || 'Unknown',
         type: getDeviceType(userAgentString)
       },
       
