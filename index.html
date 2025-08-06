@@ -193,6 +193,7 @@
             const submitButton = document.getElementById('submit-button');
             const responseMessage = document.getElementById('response-message');
             form.addEventListener('submit', async (event) => {
+                console.log('Form submit event triggered');
                 event.preventDefault();
                 if (!form.checkValidity()) {
                     form.reportValidity();
@@ -277,6 +278,11 @@
                     }
                 } catch (error) {
                     console.error('Submission Error:', error);
+                    console.error('Error details:', {
+                        message: error.message,
+                        status: error.status,
+                        stack: error.stack
+                    });
                     responseMessage.textContent = `Submission failed. Please try again later. (Error: ${error.message})`;
                     responseMessage.className = 'mt-4 p-4 text-center text-red-800 bg-red-100 rounded-lg';
                 } finally {
