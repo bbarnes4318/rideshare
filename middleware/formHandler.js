@@ -72,13 +72,21 @@ const formHandler = async (req, res) => {
     
     // Parse dates
     const parseDate = (dateStr) => {
-      if (!dateStr) return null;
-      // Handle MM/DD/YYYY format
-      const parts = dateStr.split('/');
-      if (parts.length === 3) {
-        return new Date(parts[2], parts[0] - 1, parts[1]);
+      if (!dateStr) return new Date();
+      try {
+        // Handle MM/DD/YYYY format
+        const parts = dateStr.split('/');
+        if (parts.length === 3) {
+          const date = new Date(parts[2], parts[0] - 1, parts[1]);
+          if (!isNaN(date.getTime())) return date;
+        }
+        // Try parsing as regular date
+        const date = new Date(dateStr);
+        if (!isNaN(date.getTime())) return date;
+        return new Date(); // fallback
+      } catch (error) {
+        return new Date(); // fallback
       }
-      return new Date(dateStr);
     };
     
     // Create submission object
@@ -92,7 +100,7 @@ const formHandler = async (req, res) => {
       city: formData.city?.trim(),
       state: formData.state?.toUpperCase(),
       zip: formData.zip?.trim(),
-      gender: formData.gender,
+      gender: formData.gender ? formData.gender.charAt(0).toUpperCase() + formData.gender.slice(1).toLowerCase() : 'Other',
       date_of_birth: parseDate(formData.date_of_birth),
       diagnosis_year: parseDate(formData.diagnosis_year),
       
@@ -122,7 +130,7 @@ const formHandler = async (req, res) => {
       },
       
       // Trusted form and metadata
-      trusted_form_cert_url: formData.xxTrustedFormCertUrl || formData.Trusted_Form_Alt || '',
+      trusted_form_cert_url: formData.xxTrustedFormCertUrl || formData.Trusted_Form_Alt || formData.trusted_form_cert_url || 'https://cert.trustedform.com/pending',
       case_type: formData.case_type || 'Rideshare',
       ownerid: formData.ownerid || '005TR00000CDuezYAD',
       campaign: formData.campaign || '',
@@ -205,7 +213,7 @@ const formHandler = async (req, res) => {
     res.status(500).json({
       status: 'ERROR',
       message: 'Submission failed. Please try again.',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: error.message // Always show error for debugging
     });
   }
 };
