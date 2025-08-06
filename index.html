@@ -192,9 +192,17 @@
             const form = document.getElementById('claim-form');
             const submitButton = document.getElementById('submit-button');
             const responseMessage = document.getElementById('response-message');
+            let isSubmitting = false;
+            
             form.addEventListener('submit', async (event) => {
                 console.log('Form submit event triggered');
                 event.preventDefault();
+                
+                if (isSubmitting) {
+                    console.log('Already submitting, ignoring duplicate submission');
+                    return;
+                }
+                isSubmitting = true;
                 console.log('Form validity check:', form.checkValidity());
                 // Temporarily disable validation check
                 // if (!form.checkValidity()) {
@@ -290,6 +298,7 @@
                 } finally {
                     submitButton.disabled = false;
                     submitButton.textContent = 'Submit My Claim for Review';
+                    isSubmitting = false;
                 }
             });
         });
