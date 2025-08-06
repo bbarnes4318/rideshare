@@ -100,7 +100,7 @@
                             <p class="text-slate-600 text-center mb-8">Fill out the form below to see if you qualify.</p>
                             
                             <!-- Form Start -->
-                            <form id="claim-form" novalidate>
+                            <form id="claim-form" onsubmit="return handleSubmit(event)">
                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-5">
                                     <div>
                                         <label for="fname" class="form-label">First Name</label>
@@ -186,122 +186,71 @@
         </div>
     </footer>
 
-    <!-- JAVASCRIPT LOGIC - UNCHANGED -->
     <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const form = document.getElementById('claim-form');
-            const submitButton = document.getElementById('submit-button');
-            const responseMessage = document.getElementById('response-message');
-            let isSubmitting = false;
+        let isSubmitting = false;
+        
+        function handleSubmit(event) {
+            event.preventDefault();
             
-            form.addEventListener('submit', async (event) => {
-                console.log('Form submit event triggered');
-                event.preventDefault();
-                
-                if (isSubmitting) {
-                    console.log('Already submitting, ignoring duplicate submission');
-                    return;
+            if (isSubmitting) {
+                console.log('Already submitting');
+                return false;
+            }
+            
+            isSubmitting = true;
+            const button = document.getElementById('submit-button');
+            const message = document.getElementById('response-message');
+            
+            button.disabled = true;
+            button.textContent = 'Submitting...';
+            
+            const form = document.getElementById('claim-form');
+            const formData = new FormData(form);
+            
+            const payload = {
+                fname: formData.get('fname'),
+                lname: formData.get('lname'),
+                email: formData.get('email'),
+                phone: formData.get('phone'),
+                address: formData.get('address'),
+                city: formData.get('city'),
+                state: formData.get('state'),
+                zip: formData.get('zip'),
+                gender: formData.get('gender'),
+                date_of_birth: formData.get('date_of_birth'),
+                diagnosis_year: formData.get('diagnosis_year'),
+                xxTrustedFormCertUrl: document.getElementById('xxTrustedFormCertUrl').value
+            };
+            
+            fetch('/api-proxy/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Basic ' + btoa('Over.The.World.Sales:STD8 7CNS URtl fHof uH3f 3VZJ')
+                },
+                body: JSON.stringify([payload])
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'SUCCESS') {
+                    message.innerHTML = '<div class="p-4 text-green-800 bg-green-100 rounded-lg">Thank you! Your submission was successful.</div>';
+                    form.reset();
+                } else {
+                    throw new Error(data.message || 'Submission failed');
                 }
-                isSubmitting = true;
-                console.log('Form validity check:', form.checkValidity());
-                // Temporarily disable validation check
-                // if (!form.checkValidity()) {
-                //     form.reportValidity();
-                //     return;
-                // }
-                const originalButtonText = submitButton.textContent;
-                submitButton.disabled = true;
-                submitButton.innerHTML = `
-                    <svg class="animate-spin h-5 w-5 mr-3 inline-block" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Submitting...
-                `;
-                responseMessage.textContent = '';
-                responseMessage.className = 'mt-4 text-center';
-                const formData = new FormData(form);
-                const formatDate = (dateString) => {
-                    if (!dateString) return '';
-                    const date = new Date(dateString);
-                    const userTimezoneOffset = date.getTimezoneOffset() * 60000;
-                    const adjustedDate = new Date(date.getTime() + userTimezoneOffset);
-                    const month = String(adjustedDate.getMonth() + 1).padStart(2, '0');
-                    const day = String(adjustedDate.getDate()).padStart(2, '0');
-                    const year = adjustedDate.getFullYear();
-                    return `${month}/${day}/${year}`;
-                };
-                const formatDateTime = (date) => {
-                    const month = String(date.getMonth() + 1).padStart(2, '0');
-                    const day = String(date.getDate()).padStart(2, '0');
-                    const year = date.getFullYear();
-                    const hours = String(date.getHours()).padStart(2, '0');
-                    const minutes = String(date.getMinutes()).padStart(2, '0');
-                    return `${month}/${day}/${year} ${hours}:${minutes}`;
-                };
-                const trustedFormUrl = document.getElementById('xxTrustedFormCertUrl').value;
-                const payload = {
-                    email: formData.get('email'),
-                    fname: formData.get('fname'),
-                    lname: formData.get('lname'),
-                    date_of_birth: formatDate(formData.get('date_of_birth')),
-                    phone: formData.get('phone').replace(/\D/g, ''),
-                    country: "US",
-                    ip: "", 
-                    address: formData.get('address'),
-                    city: formData.get('city'),
-                    state: formData.get('state').toUpperCase(),
-                    zip: formData.get('zip'),
-                    offer_url: window.location.href,
-                    date_subscribed: formatDateTime(new Date()),
-                    comments: "",
-                    case_type: "Rideshare",
-                    Trusted_Form_Alt: trustedFormUrl,
-                    Jornaya: "",
-                    diagnosis: "Update after call",
-                    gender: formData.get('gender'),
-                    ownerid: "005TR00000CDuezYAD",
-                    diagnosis_year: formatDate(formData.get('diagnosis_year')),
-                    campaign: "",
-                    env: "prod"
-                };
-                const apiUrl = '/api-proxy/';
-                const username = 'Over.The.World.Sales';
-                const password = 'STD8 7CNS URtl fHof uH3f 3VZJ';
-                const authHeader = 'Basic ' + btoa(username + ':' + password);
-                try {
-                    const response = await fetch(apiUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': authHeader
-                        },
-                        body: JSON.stringify([payload]) 
-                    });
-                    const result = await response.json();
-                    if (response.ok && result.status === 'SUCCESS') {
-                        responseMessage.textContent = 'Thank you! Your information has been submitted successfully. We will contact you shortly.';
-                        responseMessage.className = 'mt-4 p-4 text-center text-green-800 bg-green-100 rounded-lg';
-                        form.reset();
-                    } else {
-                        throw new Error(result.message || 'An unknown error occurred.');
-                    }
-                } catch (error) {
-                    console.error('Submission Error:', error);
-                    console.error('Error details:', {
-                        message: error.message,
-                        status: error.status,
-                        stack: error.stack
-                    });
-                    responseMessage.textContent = `Submission failed. Please try again later. (Error: ${error.message})`;
-                    responseMessage.className = 'mt-4 p-4 text-center text-red-800 bg-red-100 rounded-lg';
-                } finally {
-                    submitButton.disabled = false;
-                    submitButton.textContent = 'Submit My Claim for Review';
-                    isSubmitting = false;
-                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                message.innerHTML = '<div class="p-4 text-red-800 bg-red-100 rounded-lg">Submission failed. Please try again.</div>';
+            })
+            .finally(() => {
+                button.disabled = false;
+                button.textContent = 'Submit My Claim for Review';
+                isSubmitting = false;
             });
-        });
+            
+            return false;
+        }
     </script>
 
 </body>
