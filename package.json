@@ -8,6 +8,7 @@
     "dev": "nodemon server.js",
     "setup": "node setup.js",
     "build": "echo 'Build complete - static files ready'",
+    "deploy": "bash deploy.sh",
     "install-deps": "npm install"
   },
   "dependencies": {
@@ -39,5 +40,13 @@
     "landing-page"
   ],
   "author": "Rideshare Analytics Team",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bbarnes4318/rideshare.git"
+  },
+  "engines": {
+    "node": ">=14.0.0",
+    "npm": ">=6.0.0"
+  }
 }
