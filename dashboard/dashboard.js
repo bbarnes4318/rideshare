@@ -14,8 +14,7 @@ class RideshareDashboard {
     init() {
         // Check authentication
         if (!this.token) {
-            window.location.href = '/admin';
-            return;
+            return; // Don't redirect, just don't initialize
         }
         
         // Set user info
@@ -616,7 +615,8 @@ class RideshareDashboard {
         
         if (!response.ok) {
             if (response.status === 401) {
-                this.logout();
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
                 return;
             }
             throw new Error(`API call failed: ${response.statusText}`);
