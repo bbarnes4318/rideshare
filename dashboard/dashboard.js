@@ -62,22 +62,26 @@ class RideshareDashboard {
         });
         
         // Search and filters (for submissions section)
-        document.getElementById('searchInput')?.addEventListener('input', 
-            this.debounce(() => this.loadSubmissions(), 500)
-        );
+        const searchInput = document.getElementById('searchInput');
+        if (searchInput) {
+            searchInput.addEventListener('input', this.debounce(() => this.loadSubmissions(), 500));
+        }
         
-        document.getElementById('statusFilter')?.addEventListener('change', () => {
-            this.loadSubmissions();
-        });
+        const statusFilter = document.getElementById('statusFilter');
+        if (statusFilter) {
+            statusFilter.addEventListener('change', () => this.loadSubmissions());
+        }
         
-        document.getElementById('countryFilter')?.addEventListener('change', () => {
-            this.loadSubmissions();
-        });
+        const countryFilter = document.getElementById('countryFilter');
+        if (countryFilter) {
+            countryFilter.addEventListener('change', () => this.loadSubmissions());
+        }
         
         // Export button
-        document.getElementById('exportBtn')?.addEventListener('click', () => {
-            this.exportData();
-        });
+        const exportBtn = document.getElementById('exportBtn');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', () => this.exportData());
+        }
     }
     
     switchSection(section) {
@@ -85,7 +89,7 @@ class RideshareDashboard {
         document.querySelectorAll('.nav-item').forEach(item => {
             item.classList.remove('active');
         });
-        document.querySelector(`[data-section=\"${section}\"]`).classList.add('active');
+        document.querySelector(`[data-section="${section}"]`).classList.add('active');
         
         // Hide all sections
         document.querySelectorAll('.section-content').forEach(content => {
@@ -156,4 +160,503 @@ class RideshareDashboard {
     }
     
     createCharts(data) {
-        // Submissions Over Time Chart\n        this.createSubmissionsChart(data.analytics.dailySubmissions);\n        \n        // Device Distribution Chart\n        this.createDeviceChart(data.analytics.byDevice);\n        \n        // Location Chart\n        this.createLocationChart(data.additional.topLocations);\n        \n        // Status Chart\n        this.createStatusChart(data.analytics.byStatus);\n    }\n    \n    createSubmissionsChart(dailyData) {\n        const ctx = document.getElementById('submissionsChart').getContext('2d');\n        \n        if (this.charts.submissions) {\n            this.charts.submissions.destroy();\n        }\n        \n        const labels = dailyData.map(item => item._id);\n        const values = dailyData.map(item => item.count);\n        \n        this.charts.submissions = new Chart(ctx, {\n            type: 'line',\n            data: {\n                labels: labels,\n                datasets: [{\n                    label: 'Submissions',\n                    data: values,\n                    borderColor: '#3b82f6',\n                    backgroundColor: 'rgba(59, 130, 246, 0.1)',\n                    tension: 0.4,\n                    fill: true\n                }]\n            },\n            options: {\n                responsive: true,\n                maintainAspectRatio: false,\n                plugins: {\n                    legend: {\n                        display: false\n                    }\n                },\n                scales: {\n                    y: {\n                        beginAtZero: true,\n                        grid: {\n                            color: 'rgba(0, 0, 0, 0.1)'\n                        }\n                    },\n                    x: {\n                        grid: {\n                            display: false\n                        }\n                    }\n                }\n            }\n        });\n    }\n    \n    createDeviceChart(deviceData) {\n        const ctx = document.getElementById('deviceChart').getContext('2d');\n        \n        if (this.charts.device) {\n            this.charts.device.destroy();\n        }\n        \n        const labels = deviceData.map(item => item._id || 'Unknown');\n        const values = deviceData.map(item => item.count);\n        const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];\n        \n        this.charts.device = new Chart(ctx, {\n            type: 'doughnut',\n            data: {\n                labels: labels,\n                datasets: [{\n                    data: values,\n                    backgroundColor: colors.slice(0, labels.length),\n                    borderWidth: 0\n                }]\n            },\n            options: {\n                responsive: true,\n                maintainAspectRatio: false,\n                plugins: {\n                    legend: {\n                        position: 'bottom'\n                    }\n                }\n            }\n        });\n    }\n    \n    createLocationChart(locationData) {\n        const ctx = document.getElementById('locationChart').getContext('2d');\n        \n        if (this.charts.location) {\n            this.charts.location.destroy();\n        }\n        \n        const labels = locationData.slice(0, 10).map(item => item._id);\n        const values = locationData.slice(0, 10).map(item => item.count);\n        \n        this.charts.location = new Chart(ctx, {\n            type: 'bar',\n            data: {\n                labels: labels,\n                datasets: [{\n                    label: 'Submissions',\n                    data: values,\n                    backgroundColor: '#10b981',\n                    borderRadius: 4\n                }]\n            },\n            options: {\n                responsive: true,\n                maintainAspectRatio: false,\n                plugins: {\n                    legend: {\n                        display: false\n                    }\n                },\n                scales: {\n                    y: {\n                        beginAtZero: true,\n                        grid: {\n                            color: 'rgba(0, 0, 0, 0.1)'\n                        }\n                    },\n                    x: {\n                        grid: {\n                            display: false\n                        }\n                    }\n                }\n            }\n        });\n    }\n    \n    createStatusChart(statusData) {\n        const ctx = document.getElementById('statusChart').getContext('2d');\n        \n        if (this.charts.status) {\n            this.charts.status.destroy();\n        }\n        \n        const labels = statusData.map(item => item._id);\n        const values = statusData.map(item => item.count);\n        const colors = {\n            'pending': '#f59e0b',\n            'processed': '#3b82f6',\n            'contacted': '#10b981',\n            'qualified': '#059669',\n            'rejected': '#ef4444'\n        };\n        \n        this.charts.status = new Chart(ctx, {\n            type: 'pie',\n            data: {\n                labels: labels,\n                datasets: [{\n                    data: values,\n                    backgroundColor: labels.map(label => colors[label] || '#6b7280'),\n                    borderWidth: 0\n                }]\n            },\n            options: {\n                responsive: true,\n                maintainAspectRatio: false,\n                plugins: {\n                    legend: {\n                        position: 'bottom'\n                    }\n                }\n            }\n        });\n    }\n    \n    async loadSubmissions(page = 1) {\n        this.showLoading();\n        \n        try {\n            const params = new URLSearchParams({\n                page: page,\n                limit: 20\n            });\n            \n            // Add filters\n            const search = document.getElementById('searchInput').value;\n            if (search) params.append('search', search);\n            \n            const status = document.getElementById('statusFilter').value;\n            if (status) params.append('status', status);\n            \n            const country = document.getElementById('countryFilter').value;\n            if (country) params.append('country', country);\n            \n            const response = await this.apiCall(`/api/submissions?${params}`);\n            \n            this.renderSubmissions(response.submissions);\n            this.renderPagination(response.pagination);\n            \n            document.getElementById('submissionCount').textContent = response.pagination.total;\n            \n        } catch (error) {\n            console.error('Error loading submissions:', error);\n            this.showError('Failed to load submissions');\n        } finally {\n            this.hideLoading();\n        }\n    }\n    \n    renderSubmissions(submissions) {\n        const tbody = document.getElementById('submissionsTableBody');\n        tbody.innerHTML = '';\n        \n        submissions.forEach(submission => {\n            const row = document.createElement('tr');\n            row.className = 'hover:bg-gray-50 cursor-pointer';\n            \n            const statusClass = `status-${submission.status}`;\n            const date = new Date(submission.submission_date).toLocaleDateString();\n            const location = `${submission.geolocation?.city || 'Unknown'}, ${submission.geolocation?.country || 'Unknown'}`;\n            \n            row.innerHTML = `\n                <td class=\"px-6 py-4 whitespace-nowrap\">\n                    <div class=\"text-sm font-medium text-gray-900\">${submission.fname} ${submission.lname}</div>\n                </td>\n                <td class=\"px-6 py-4 whitespace-nowrap\">\n                    <div class=\"text-sm text-gray-900\">${submission.email}</div>\n                    <div class=\"text-sm text-gray-500\">${submission.phone}</div>\n                </td>\n                <td class=\"px-6 py-4 whitespace-nowrap\">\n                    <div class=\"text-sm text-gray-900\">${location}</div>\n                </td>\n                <td class=\"px-6 py-4 whitespace-nowrap\">\n                    <span class=\"status-badge ${statusClass}\">${submission.status}</span>\n                </td>\n                <td class=\"px-6 py-4 whitespace-nowrap\">\n                    <div class=\"text-sm text-gray-900\">${submission.quality_score}/100</div>\n                </td>\n                <td class=\"px-6 py-4 whitespace-nowrap text-sm text-gray-500\">\n                    ${date}\n                </td>\n                <td class=\"px-6 py-4 whitespace-nowrap text-sm font-medium\">\n                    <button class=\"text-blue-600 hover:text-blue-900\" onclick=\"dashboard.viewSubmission('${submission._id}')\">\n                        View\n                    </button>\n                </td>\n            `;\n            \n            tbody.appendChild(row);\n        });\n    }\n    \n    renderPagination(pagination) {\n        const paginationDiv = document.getElementById('pagination');\n        \n        const prevDisabled = pagination.page <= 1;\n        const nextDisabled = pagination.page >= pagination.pages;\n        \n        paginationDiv.innerHTML = `\n            <div class=\"flex items-center text-sm text-gray-500\">\n                Showing ${((pagination.page - 1) * pagination.limit) + 1} to ${Math.min(pagination.page * pagination.limit, pagination.total)} of ${pagination.total} results\n            </div>\n            <div class=\"flex space-x-2\">\n                <button \n                    class=\"px-3 py-1 border rounded ${prevDisabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'}\" \n                    ${prevDisabled ? 'disabled' : `onclick=\"dashboard.loadSubmissions(${pagination.page - 1})\"`}\n                >\n                    Previous\n                </button>\n                <span class=\"px-3 py-1 bg-blue-100 text-blue-700 rounded\">${pagination.page}</span>\n                <button \n                    class=\"px-3 py-1 border rounded ${nextDisabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'}\" \n                    ${nextDisabled ? 'disabled' : `onclick=\"dashboard.loadSubmissions(${pagination.page + 1})\"`}\n                >\n                    Next\n                </button>\n            </div>\n        `;\n    }\n    \n    async loadMapData() {\n        if (!this.map) {\n            this.initMap();\n        }\n        \n        try {\n            const response = await this.apiCall('/api/analytics/map-data');\n            this.updateMapMarkers(response);\n        } catch (error) {\n            console.error('Error loading map data:', error);\n        }\n    }\n    \n    initMap() {\n        this.map = L.map('map').setView([39.8283, -98.5795], 4); // Center on USA\n        \n        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {\n            attribution: '© OpenStreetMap contributors'\n        }).addTo(this.map);\n    }\n    \n    updateMapMarkers(locations) {\n        // Clear existing markers\n        if (this.mapMarkers) {\n            this.mapMarkers.forEach(marker => this.map.removeLayer(marker));\n        }\n        this.mapMarkers = [];\n        \n        locations.forEach(location => {\n            if (location.coordinates.lat && location.coordinates.lng) {\n                const marker = L.circleMarker([location.coordinates.lat, location.coordinates.lng], {\n                    radius: Math.min(location.count * 3, 20),\n                    fillColor: '#3b82f6',\n                    color: '#1e40af',\n                    weight: 2,\n                    opacity: 0.8,\n                    fillOpacity: 0.6\n                });\n                \n                const popupContent = `\n                    <strong>${location.location.city}, ${location.location.country}</strong><br>\n                    Submissions: ${location.count}<br>\n                    Recent submissions: ${location.submissions.length}\n                `;\n                \n                marker.bindPopup(popupContent);\n                marker.addTo(this.map);\n                \n                this.mapMarkers.push(marker);\n            }\n        });\n    }\n    \n    async exportData() {\n        try {\n            const params = new URLSearchParams();\n            \n            // Add current filters\n            const status = document.getElementById('statusFilter').value;\n            if (status) params.append('status', status);\n            \n            const country = document.getElementById('countryFilter').value;\n            if (country) params.append('country', country);\n            \n            const response = await fetch(`/api/analytics/export/csv?${params}`, {\n                headers: {\n                    'Authorization': `Bearer ${this.token}`\n                }\n            });\n            \n            if (response.ok) {\n                const blob = await response.blob();\n                const url = window.URL.createObjectURL(blob);\n                const a = document.createElement('a');\n                a.style.display = 'none';\n                a.href = url;\n                a.download = 'rideshare_submissions.csv';\n                document.body.appendChild(a);\n                a.click();\n                window.URL.revokeObjectURL(url);\n                \n                this.showSuccess('Data exported successfully');\n            } else {\n                throw new Error('Export failed');\n            }\n        } catch (error) {\n            console.error('Export error:', error);\n            this.showError('Failed to export data');\n        }\n    }\n    \n    async viewSubmission(id) {\n        try {\n            const response = await this.apiCall(`/api/submissions/${id}`);\n            this.showSubmissionModal(response);\n        } catch (error) {\n            console.error('Error loading submission details:', error);\n            this.showError('Failed to load submission details');\n        }\n    }\n    \n    showSubmissionModal(submission) {\n        // Create and show modal with submission details\n        const modal = document.createElement('div');\n        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';\n        \n        modal.innerHTML = `\n            <div class=\"bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto\">\n                <div class=\"flex justify-between items-center mb-4\">\n                    <h3 class=\"text-lg font-semibold\">Submission Details</h3>\n                    <button class=\"text-gray-500 hover:text-gray-700\" onclick=\"this.closest('.fixed').remove()\">\n                        <svg class=\"w-6 h-6\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\">\n                            <path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M6 18L18 6M6 6l12 12\"></path>\n                        </svg>\n                    </button>\n                </div>\n                \n                <div class=\"grid grid-cols-2 gap-4 text-sm\">\n                    <div><strong>Name:</strong> ${submission.fname} ${submission.lname}</div>\n                    <div><strong>Email:</strong> ${submission.email}</div>\n                    <div><strong>Phone:</strong> ${submission.phone}</div>\n                    <div><strong>Status:</strong> <span class=\"status-badge status-${submission.status}\">${submission.status}</span></div>\n                    <div><strong>Quality Score:</strong> ${submission.quality_score}/100</div>\n                    <div><strong>Location:</strong> ${submission.geolocation?.city}, ${submission.geolocation?.country}</div>\n                    <div><strong>Device:</strong> ${submission.device_info?.type}</div>\n                    <div><strong>Browser:</strong> ${submission.browser_info?.family}</div>\n                    <div class=\"col-span-2\"><strong>Address:</strong> ${submission.fullAddress}</div>\n                    <div class=\"col-span-2\"><strong>Submitted:</strong> ${new Date(submission.submission_date).toLocaleString()}</div>\n                    <div class=\"col-span-2\"><strong>Trusted Form:</strong> <a href=\"${submission.trusted_form_cert_url}\" target=\"_blank\" class=\"text-blue-600 hover:underline\">View Certificate</a></div>\n                </div>\n            </div>\n        `;\n        \n        document.body.appendChild(modal);\n    }\n    \n    toggleDarkMode() {\n        document.body.classList.toggle('dark');\n        localStorage.setItem('darkMode', document.body.classList.contains('dark'));\n    }\n    \n    setupAutoRefresh() {\n        setInterval(() => {\n            if (this.currentSection === 'dashboard') {\n                this.loadDashboardData();\n            }\n        }, 30000); // Refresh every 30 seconds\n    }\n    \n    updateLastUpdated() {\n        const now = new Date();\n        document.getElementById('lastUpdated').textContent = now.toLocaleTimeString();\n    }\n    \n    logout() {\n        localStorage.removeItem('token');\n        localStorage.removeItem('user');\n        window.location.href = '/admin';\n    }\n    \n    // Utility methods\n    async apiCall(endpoint, options = {}) {\n        const response = await fetch(endpoint, {\n            headers: {\n                'Authorization': `Bearer ${this.token}`,\n                'Content-Type': 'application/json',\n                ...options.headers\n            },\n            ...options\n        });\n        \n        if (!response.ok) {\n            if (response.status === 401) {\n                this.logout();\n                return;\n            }\n            throw new Error(`API call failed: ${response.statusText}`);\n        }\n        \n        return await response.json();\n    }\n    \n    showLoading() {\n        document.getElementById('loadingOverlay').classList.remove('hidden');\n    }\n    \n    hideLoading() {\n        document.getElementById('loadingOverlay').classList.add('hidden');\n    }\n    \n    showError(message) {\n        // Simple alert for now - could be enhanced with toast notifications\n        alert('Error: ' + message);\n    }\n    \n    showSuccess(message) {\n        alert('Success: ' + message);\n    }\n    \n    debounce(func, wait) {\n        let timeout;\n        return function executedFunction(...args) {\n            const later = () => {\n                clearTimeout(timeout);\n                func(...args);\n            };\n            clearTimeout(timeout);\n            timeout = setTimeout(later, wait);\n        };\n    }\n}\n\n// Initialize dashboard when DOM is loaded\ndocument.addEventListener('DOMContentLoaded', () => {\n    window.dashboard = new RideshareDashboard();\n});"
+        // Submissions Over Time Chart
+        this.createSubmissionsChart(data.analytics.dailySubmissions);
+        
+        // Device Distribution Chart
+        this.createDeviceChart(data.analytics.byDevice);
+        
+        // Location Chart
+        this.createLocationChart(data.additional.topLocations);
+        
+        // Status Chart
+        this.createStatusChart(data.analytics.byStatus);
+    }
+    
+    createSubmissionsChart(dailyData) {
+        const ctx = document.getElementById('submissionsChart').getContext('2d');
+        
+        if (this.charts.submissions) {
+            this.charts.submissions.destroy();
+        }
+        
+        const labels = dailyData.map(item => item._id);
+        const values = dailyData.map(item => item.count);
+        
+        this.charts.submissions = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Submissions',
+                    data: values,
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.1)'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    createDeviceChart(deviceData) {
+        const ctx = document.getElementById('deviceChart').getContext('2d');
+        
+        if (this.charts.device) {
+            this.charts.device.destroy();
+        }
+        
+        const labels = deviceData.map(item => item._id || 'Unknown');
+        const values = deviceData.map(item => item.count);
+        const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+        
+        this.charts.device = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: values,
+                    backgroundColor: colors.slice(0, labels.length),
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+    }
+    
+    createLocationChart(locationData) {
+        const ctx = document.getElementById('locationChart').getContext('2d');
+        
+        if (this.charts.location) {
+            this.charts.location.destroy();
+        }
+        
+        const labels = locationData.slice(0, 10).map(item => item._id);
+        const values = locationData.slice(0, 10).map(item => item.count);
+        
+        this.charts.location = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Submissions',
+                    data: values,
+                    backgroundColor: '#10b981',
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.1)'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    createStatusChart(statusData) {
+        const ctx = document.getElementById('statusChart').getContext('2d');
+        
+        if (this.charts.status) {
+            this.charts.status.destroy();
+        }
+        
+        const labels = statusData.map(item => item._id);
+        const values = statusData.map(item => item.count);
+        const colors = {
+            'pending': '#f59e0b',
+            'processed': '#3b82f6',
+            'contacted': '#10b981',
+            'qualified': '#059669',
+            'rejected': '#ef4444'
+        };
+        
+        this.charts.status = new Chart(ctx, {
+            type: 'pie',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: values,
+                    backgroundColor: labels.map(label => colors[label] || '#6b7280'),
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+    }
+    
+    async loadSubmissions(page = 1) {
+        this.showLoading();
+        
+        try {
+            const params = new URLSearchParams({
+                page: page,
+                limit: 20
+            });
+            
+            // Add filters
+            const search = document.getElementById('searchInput');
+            if (search && search.value) params.append('search', search.value);
+            
+            const status = document.getElementById('statusFilter');
+            if (status && status.value) params.append('status', status.value);
+            
+            const country = document.getElementById('countryFilter');
+            if (country && country.value) params.append('country', country.value);
+            
+            const response = await this.apiCall(`/api/submissions?${params}`);
+            
+            this.renderSubmissions(response.submissions);
+            this.renderPagination(response.pagination);
+            
+            document.getElementById('submissionCount').textContent = response.pagination.total;
+            
+        } catch (error) {
+            console.error('Error loading submissions:', error);
+            this.showError('Failed to load submissions');
+        } finally {
+            this.hideLoading();
+        }
+    }
+    
+    renderSubmissions(submissions) {
+        const tbody = document.getElementById('submissionsTableBody');
+        if (!tbody) return;
+        
+        tbody.innerHTML = '';
+        
+        submissions.forEach(submission => {
+            const row = document.createElement('tr');
+            row.className = 'hover:bg-gray-50 cursor-pointer';
+            
+            const statusClass = `status-${submission.status}`;
+            const date = new Date(submission.submission_date).toLocaleDateString();
+            const location = `${submission.geolocation?.city || 'Unknown'}, ${submission.geolocation?.country || 'Unknown'}`;
+            
+            row.innerHTML = `
+                <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm font-medium text-gray-900">${submission.fname} ${submission.lname}</div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm text-gray-900">${submission.email}</div>
+                    <div class="text-sm text-gray-500">${submission.phone}</div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm text-gray-900">${location}</div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                    <span class="status-badge ${statusClass}">${submission.status}</span>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm text-gray-900">${submission.quality_score}/100</div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    ${date}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                    <button class="text-blue-600 hover:text-blue-900" onclick="dashboard.viewSubmission('${submission._id}')">
+                        View
+                    </button>
+                </td>
+            `;
+            
+            tbody.appendChild(row);
+        });
+    }
+    
+    renderPagination(pagination) {
+        const paginationDiv = document.getElementById('pagination');
+        if (!paginationDiv) return;
+        
+        const prevDisabled = pagination.page <= 1;
+        const nextDisabled = pagination.page >= pagination.pages;
+        
+        paginationDiv.innerHTML = `
+            <div class="flex items-center text-sm text-gray-500">
+                Showing ${((pagination.page - 1) * pagination.limit) + 1} to ${Math.min(pagination.page * pagination.limit, pagination.total)} of ${pagination.total} results
+            </div>
+            <div class="flex space-x-2">
+                <button 
+                    class="px-3 py-1 border rounded ${prevDisabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'}" 
+                    ${prevDisabled ? 'disabled' : `onclick="dashboard.loadSubmissions(${pagination.page - 1})"`}
+                >
+                    Previous
+                </button>
+                <span class="px-3 py-1 bg-blue-100 text-blue-700 rounded">${pagination.page}</span>
+                <button 
+                    class="px-3 py-1 border rounded ${nextDisabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'}" 
+                    ${nextDisabled ? 'disabled' : `onclick="dashboard.loadSubmissions(${pagination.page + 1})"`}
+                >
+                    Next
+                </button>
+            </div>
+        `;
+    }
+    
+    async loadMapData() {
+        if (!this.map) {
+            this.initMap();
+        }
+        
+        try {
+            const response = await this.apiCall('/api/analytics/map-data');
+            this.updateMapMarkers(response);
+        } catch (error) {
+            console.error('Error loading map data:', error);
+        }
+    }
+    
+    initMap() {
+        this.map = L.map('map').setView([39.8283, -98.5795], 4);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(this.map);
+    }
+    
+    updateMapMarkers(locations) {
+        if (this.mapMarkers) {
+            this.mapMarkers.forEach(marker => this.map.removeLayer(marker));
+        }
+        this.mapMarkers = [];
+        
+        locations.forEach(location => {
+            if (location.coordinates.lat && location.coordinates.lng) {
+                const marker = L.circleMarker([location.coordinates.lat, location.coordinates.lng], {
+                    radius: Math.min(location.count * 3, 20),
+                    fillColor: '#3b82f6',
+                    color: '#1e40af',
+                    weight: 2,
+                    opacity: 0.8,
+                    fillOpacity: 0.6
+                });
+                
+                const popupContent = `
+                    <strong>${location.location.city}, ${location.location.country}</strong><br>
+                    Submissions: ${location.count}<br>
+                    Recent submissions: ${location.submissions.length}
+                `;
+                
+                marker.bindPopup(popupContent);
+                marker.addTo(this.map);
+                
+                this.mapMarkers.push(marker);
+            }
+        });
+    }
+    
+    async exportData() {
+        try {
+            const params = new URLSearchParams();
+            
+            const status = document.getElementById('statusFilter');
+            if (status && status.value) params.append('status', status.value);
+            
+            const country = document.getElementById('countryFilter');
+            if (country && country.value) params.append('country', country.value);
+            
+            const response = await fetch(`/api/analytics/export/csv?${params}`, {
+                headers: {
+                    'Authorization': `Bearer ${this.token}`
+                }
+            });
+            
+            if (response.ok) {
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = 'rideshare_submissions.csv';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                
+                this.showSuccess('Data exported successfully');
+            } else {
+                throw new Error('Export failed');
+            }
+        } catch (error) {
+            console.error('Export error:', error);
+            this.showError('Failed to export data');
+        }
+    }
+    
+    async viewSubmission(id) {
+        try {
+            const response = await this.apiCall(`/api/submissions/${id}`);
+            this.showSubmissionModal(response);
+        } catch (error) {
+            console.error('Error loading submission details:', error);
+            this.showError('Failed to load submission details');
+        }
+    }
+    
+    showSubmissionModal(submission) {
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+        
+        modal.innerHTML = `
+            <div class="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-semibold">Submission Details</h3>
+                    <button class="text-gray-500 hover:text-gray-700" onclick="this.closest('.fixed').remove()">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4 text-sm">
+                    <div><strong>Name:</strong> ${submission.fname} ${submission.lname}</div>
+                    <div><strong>Email:</strong> ${submission.email}</div>
+                    <div><strong>Phone:</strong> ${submission.phone}</div>
+                    <div><strong>Status:</strong> <span class="status-badge status-${submission.status}">${submission.status}</span></div>
+                    <div><strong>Quality Score:</strong> ${submission.quality_score}/100</div>
+                    <div><strong>Location:</strong> ${submission.geolocation?.city}, ${submission.geolocation?.country}</div>
+                    <div><strong>Device:</strong> ${submission.device_info?.type}</div>
+                    <div><strong>Browser:</strong> ${submission.browser_info?.family}</div>
+                    <div class="col-span-2"><strong>Address:</strong> ${submission.fullAddress}</div>
+                    <div class="col-span-2"><strong>Submitted:</strong> ${new Date(submission.submission_date).toLocaleString()}</div>
+                    <div class="col-span-2"><strong>Trusted Form:</strong> <a href="${submission.trusted_form_cert_url}" target="_blank" class="text-blue-600 hover:underline">View Certificate</a></div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+    }
+    
+    toggleDarkMode() {
+        document.body.classList.toggle('dark');
+        localStorage.setItem('darkMode', document.body.classList.contains('dark'));
+    }
+    
+    setupAutoRefresh() {
+        setInterval(() => {
+            if (this.currentSection === 'dashboard') {
+                this.loadDashboardData();
+            }
+        }, 30000);
+    }
+    
+    updateLastUpdated() {
+        const now = new Date();
+        document.getElementById('lastUpdated').textContent = now.toLocaleTimeString();
+    }
+    
+    logout() {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/admin';
+    }
+    
+    async apiCall(endpoint, options = {}) {
+        const response = await fetch(endpoint, {
+            headers: {
+                'Authorization': `Bearer ${this.token}`,
+                'Content-Type': 'application/json',
+                ...options.headers
+            },
+            ...options
+        });
+        
+        if (!response.ok) {
+            if (response.status === 401) {
+                this.logout();
+                return;
+            }
+            throw new Error(`API call failed: ${response.statusText}`);
+        }
+        
+        return await response.json();
+    }
+    
+    showLoading() {
+        const loading = document.getElementById('loadingOverlay');
+        if (loading) loading.classList.remove('hidden');
+    }
+    
+    hideLoading() {
+        const loading = document.getElementById('loadingOverlay');
+        if (loading) loading.classList.add('hidden');
+    }
+    
+    showError(message) {
+        alert('Error: ' + message);
+    }
+    
+    showSuccess(message) {
+        alert('Success: ' + message);
+    }
+    
+    debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+}
+
+// Initialize dashboard when DOM is loaded
+document.addEventListener('DOMContentLoaded', () => {
+    window.dashboard = new RideshareDashboard();
+});

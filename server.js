@@ -12,6 +12,8 @@ const app = express();
 // Security and performance middleware
 app.use(helmet({
   contentSecurityPolicy: false, // Disabled for dashboard functionality
+  crossOriginOpenerPolicy: false, // Disabled for HTTP connections
+  crossOriginResourcePolicy: false, // Disabled for HTTP connections
 }));
 app.use(compression());
 app.use(cors({
