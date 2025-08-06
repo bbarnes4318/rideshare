@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>LOGIN TEST</title>
+</head>
+<body>
+    <h1>LOGIN FORM - NO REDIRECTS</h1>
+    
+    <form id="loginForm" style="margin: 50px;">
+        <div>
+            <label>Username:</label>
+            <input type="text" id="username" value="admin" style="margin: 10px; padding: 5px;">
+        </div>
+        <div>
+            <label>Password:</label>
+            <input type="password" id="password" value="password123" style="margin: 10px; padding: 5px;">
+        </div>
+        <button type="submit" style="margin: 10px; padding: 10px;">LOGIN</button>
+    </form>
+    
+    <div id="result" style="margin: 20px; padding: 10px; border: 1px solid black;"></div>
+    
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const result = document.getElementById('result');
+            
+            result.innerHTML = 'Attempting login...';
+            
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: username, password: password })
+                });
+                
+                const data = await response.json();
+                
+                result.innerHTML = 'Response: ' + JSON.stringify(data, null, 2);
+                
+                if (response.ok && data.token) {
+                    localStorage.setItem('token', data.token);
+                    localStorage.setItem('user', JSON.stringify(data.user));
+                    result.innerHTML += '<br><br>LOGIN SUCCESS! Token saved.';
+                    result.innerHTML += '<br><a href="/dashboard">Go to Dashboard</a>';
+                }
+                
+            } catch (error) {
+                result.innerHTML = 'ERROR: ' + error.message;
+            }
+        });
+    </script>
+</body>
+</html>

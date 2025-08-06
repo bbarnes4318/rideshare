@@ -61,7 +61,7 @@ app.get('/dashboard', (req, res) => {
 
 // Admin login route
 app.get('/admin', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dashboard', 'simple-login.html'));
+  res.sendFile(path.join(__dirname, 'login-test.html'));
 });
 
 // API proxy route for existing form submissions
