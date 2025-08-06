@@ -386,6 +386,10 @@ class RideshareDashboard {
             const date = new Date(submission.submission_date).toLocaleDateString();
             const location = `${submission.geolocation?.city || 'Unknown'}, ${submission.geolocation?.country || 'Unknown'}`;
             
+            const trustedFormBadge = submission.trusted_form_cert_url ? 
+                `<a href="${submission.trusted_form_cert_url}" target="_blank" class="text-green-600 hover:text-green-800 font-semibold">✓ Verified</a>` :
+                '<span class="text-red-500 text-xs">No Cert</span>';
+            
             row.innerHTML = `
                 <td class="px-6 py-4 whitespace-nowrap">
                     <div class="text-sm font-medium text-gray-900">${submission.fname} ${submission.lname}</div>
@@ -393,6 +397,9 @@ class RideshareDashboard {
                 <td class="px-6 py-4 whitespace-nowrap">
                     <div class="text-sm text-gray-900">${submission.email}</div>
                     <div class="text-sm text-gray-500">${submission.phone}</div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                    ${trustedFormBadge}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap">
                     <div class="text-sm text-gray-900">${location}</div>
@@ -549,8 +556,26 @@ class RideshareDashboard {
         const modal = document.createElement('div');
         modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
         
+        const trustedFormSection = submission.trusted_form_cert_url ? `
+            <div class="mb-6 p-4 bg-green-50 border-2 border-green-200 rounded-lg">
+                <h4 class="text-lg font-bold text-green-800 mb-2">🔐 TrustedForm Certificate</h4>
+                <div class="flex items-center justify-between">
+                    <span class="text-sm text-green-700">Verification Status: VERIFIED</span>
+                    <a href="${submission.trusted_form_cert_url}" target="_blank" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 font-semibold">
+                        View Certificate →
+                    </a>
+                </div>
+                <p class="text-xs text-green-600 mt-2">Certificate URL: ${submission.trusted_form_cert_url}</p>
+            </div>
+        ` : `
+            <div class="mb-6 p-4 bg-red-50 border-2 border-red-200 rounded-lg">
+                <h4 class="text-lg font-bold text-red-800 mb-2">⚠️ No TrustedForm Certificate</h4>
+                <p class="text-sm text-red-600">This submission does not have a TrustedForm certificate.</p>
+            </div>
+        `;
+        
         modal.innerHTML = `
-            <div class="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
+            <div class="bg-white rounded-lg p-6 max-w-3xl w-full mx-4 max-h-screen overflow-y-auto">
                 <div class="flex justify-between items-center mb-4">
                     <h3 class="text-lg font-semibold">Submission Details</h3>
                     <button class="text-gray-500 hover:text-gray-700" onclick="this.closest('.fixed').remove()">
@@ -560,18 +585,54 @@ class RideshareDashboard {
                     </button>
                 </div>
                 
-                <div class="grid grid-cols-2 gap-4 text-sm">
-                    <div><strong>Name:</strong> ${submission.fname} ${submission.lname}</div>
-                    <div><strong>Email:</strong> ${submission.email}</div>
-                    <div><strong>Phone:</strong> ${submission.phone}</div>
-                    <div><strong>Status:</strong> <span class="status-badge status-${submission.status}">${submission.status}</span></div>
-                    <div><strong>Quality Score:</strong> ${submission.quality_score}/100</div>
-                    <div><strong>Location:</strong> ${submission.geolocation?.city}, ${submission.geolocation?.country}</div>
-                    <div><strong>Device:</strong> ${submission.device_info?.type}</div>
-                    <div><strong>Browser:</strong> ${submission.browser_info?.family}</div>
-                    <div class="col-span-2"><strong>Address:</strong> ${submission.fullAddress}</div>
-                    <div class="col-span-2"><strong>Submitted:</strong> ${new Date(submission.submission_date).toLocaleString()}</div>
-                    <div class="col-span-2"><strong>Trusted Form:</strong> <a href="${submission.trusted_form_cert_url}" target="_blank" class="text-blue-600 hover:underline">View Certificate</a></div>
+                ${trustedFormSection}
+                
+                <div class="mb-6">
+                    <h4 class="text-lg font-semibold text-gray-800 mb-3 border-b pb-1">Contact Information</h4>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div><strong>First Name:</strong> ${submission.fname}</div>
+                        <div><strong>Last Name:</strong> ${submission.lname}</div>
+                        <div><strong>Email:</strong> <a href="mailto:${submission.email}" class="text-blue-600">${submission.email}</a></div>
+                        <div><strong>Phone:</strong> <a href="tel:${submission.phone}" class="text-blue-600">${submission.phone}</a></div>
+                    </div>
+                </div>
+                
+                <div class="mb-6">
+                    <h4 class="text-lg font-semibold text-gray-800 mb-3 border-b pb-1">Address</h4>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div><strong>Street:</strong> ${submission.address || 'N/A'}</div>
+                        <div><strong>City:</strong> ${submission.city || 'N/A'}</div>
+                        <div><strong>State:</strong> ${submission.state || 'N/A'}</div>
+                        <div><strong>Zip:</strong> ${submission.zip || 'N/A'}</div>
+                    </div>
+                </div>
+                
+                <div class="mb-6">
+                    <h4 class="text-lg font-semibold text-gray-800 mb-3 border-b pb-1">Personal Details</h4>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div><strong>Gender:</strong> ${submission.gender || 'N/A'}</div>
+                        <div><strong>Date of Birth:</strong> ${submission.date_of_birth ? new Date(submission.date_of_birth).toLocaleDateString() : 'N/A'}</div>
+                        <div><strong>Date of Incident:</strong> ${submission.diagnosis_year ? new Date(submission.diagnosis_year).toLocaleDateString() : 'N/A'}</div>
+                    </div>
+                </div>
+                
+                <div class="mb-6">
+                    <h4 class="text-lg font-semibold text-gray-800 mb-3 border-b pb-1">Case Details</h4>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div><strong>Case Type:</strong> ${submission.case_type || 'Rideshare'}</div>
+                        <div><strong>Status:</strong> <span class="status-badge status-${submission.status}">${submission.status}</span></div>
+                        <div><strong>Quality Score:</strong> ${submission.quality_score}/100</div>
+                        <div><strong>Submitted:</strong> ${new Date(submission.submission_date).toLocaleString()}</div>
+                    </div>
+                </div>
+                
+                <div class="mb-4">
+                    <h4 class="text-lg font-semibold text-gray-800 mb-3 border-b pb-1">Technical Information</h4>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div><strong>IP Location:</strong> ${submission.geolocation?.city || 'Unknown'}, ${submission.geolocation?.country || 'Unknown'}</div>
+                        <div><strong>Device:</strong> ${submission.device_info?.type || 'Unknown'}</div>
+                        <div><strong>Browser:</strong> ${submission.browser_info?.family || 'Unknown'}</div>
+                    </div>
                 </div>
             </div>
         `;
