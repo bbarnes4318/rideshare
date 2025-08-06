@@ -601,7 +601,7 @@ class RideshareDashboard {
     logout() {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
-        window.location.href = '/admin';
+        window.location.href = '/admin?logout=true';
     }
     
     async apiCall(endpoint, options = {}) {
