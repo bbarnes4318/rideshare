@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rideshare Assault Claim Center | PerEnoll.com</title>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+    <!-- TrustedForm Script -->
+    <script type="text/javascript">
+      (function() {
+        var tf = document.createElement('script');
+        tf.type = 'text/javascript';
+        tf.async = true;
+        tf.src = ("https:" == document.location.protocol ? 'https' : 'http') +
+          '://api.trustedform.com/trustedform.js?field=xxTrustedFormCertUrl&use_tagged_consent=true&l=' +
+          new Date().getTime() + Math.random();
+        var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(tf, s);
+      })();
+    </script>
+    <noscript>
+      <img src='https://api.trustedform.com/ns.gif' />
+    </noscript>
+    <!-- End TrustedForm -->
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc; /* slate-50 */
+        }
+        
+        .cta-button {
+            @apply w-full bg-green-600 text-white font-bold py-4 px-6 rounded-lg hover:bg-green-700 transition-colors shadow-md hover:shadow-lg transform hover:-translate-y-px;
+        }
+
+        /* ** FIX: NEW HIGH-CONTRAST FORM STYLES ** */
+        .form-input {
+            @apply w-full px-4 py-3 bg-slate-50 border-2 border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition-shadow text-slate-900 shadow-sm;
+        }
+        .form-label {
+            @apply block text-sm font-semibold text-slate-700 mb-1.5;
+        }
+    </style>
+</head>
+<body class="text-slate-800">
+
+    <!-- Header -->
+    <header class="bg-white/90 backdrop-blur-sm shadow-sm sticky top-0 z-50">
+        <div class="container mx-auto px-6 py-3 flex justify-between items-center">
+            <img src="perenroll.png" alt="PerEnroll Logo" class="h-8 md:h-10">
+            <a href="#claim-form-section" class="hidden sm:inline-block bg-green-600 text-white font-semibold px-5 py-2 rounded-lg hover:bg-green-700 transition-colors">
+                Start Your Free Claim
+            </a>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <main>
+        <div class="relative bg-white">
+            <div class="container mx-auto px-6 py-16 md:py-20">
+                <div class="grid md:grid-cols-12 gap-8 lg:gap-16 items-center">
+                    
+                    <!-- Left Content Column -->
+                    <div class="md:col-span-7 lg:col-span-6">
+                        <h1 class="text-4xl md:text-5xl lg:text-6xl font-extrabold text-slate-900 leading-tight mb-6">
+                            Assaulted During a Rideshare?
+                        </h1>
+                        <p class="text-lg text-slate-600 mb-8">
+                            If you were a victim of physical or sexual assault during a rideshare, you may be entitled to significant financial compensation. Our experienced legal partners are here to fight for the justice you deserve.
+                        </p>
+                        <div class="space-y-6">
+                            <div class="flex items-start">
+                                <svg class="w-7 h-7 text-green-500 mr-4 flex-shrink-0 mt-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.286zm0 13.036h.008v.008h-.008v-.008z" /></svg>
+                                <div>
+                                    <h3 class="text-lg font-bold text-slate-800">100% Confidential Case Review</h3>
+                                    <p class="text-slate-600">Your consultation is free, private, and there is absolutely no obligation to proceed.</p>
+                                </div>
+                            </div>
+                            <div class="flex items-start">
+                                <svg class="w-7 h-7 text-green-500 mr-4 flex-shrink-0 mt-1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.826-1.106-2.257 0-3.083s2.913-.826 4.019 0l.215.161m0 0A12.032 12.032 0 0112 3c4.21 0 7.813 2.602 9.468 6.364m-1.028 9.468A12.06 12.06 0 0112 21c-4.21 0-7.813-2.602-9.468-6.364" /></svg>
+                                <div>
+                                    <h3 class="text-lg font-bold text-slate-800">You Pay Nothing Upfront</h3>
+                                    <p class="text-slate-600">We work on a contingency fee basis. You only pay if we win your case.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Form Column -->
+                    <div id="claim-form-section" class="md:col-span-5 lg:col-span-6">
+                        <div class="bg-white p-8 rounded-2xl shadow-2xl border border-slate-200">
+                            <h2 class="text-2xl font-bold text-slate-900 mb-2 text-center">Start Your Free Claim Evaluation</h2>
+                            <p class="text-slate-600 text-center mb-8">Fill out the form below to see if you qualify.</p>
+                            
+                            <!-- Form Start -->
+                            <form id="claim-form" novalidate>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-5">
+                                    <div>
+                                        <label for="fname" class="form-label">First Name</label>
+                                        <input type="text" id="fname" name="fname" class="form-input" required>
+                                    </div>
+                                    <div>
+                                        <label for="lname" class="form-label">Last Name</label>
+                                        <input type="text" id="lname" name="lname" class="form-input" required>
+                                    </div>
+                                    <div class="sm:col-span-2">
+                                        <label for="email" class="form-label">Email Address</label>
+                                        <input type="email" id="email" name="email" class="form-input" required>
+                                    </div>
+                                    <div class="sm:col-span-2">
+                                        <label for="phone" class="form-label">Phone Number</label>
+                                        <input type="tel" id="phone" name="phone" class="form-input" required>
+                                    </div>
+                                    <div class="sm:col-span-2">
+                                        <label for="address" class="form-label">Street Address</label>
+                                        <input type="text" id="address" name="address" class="form-input" required>
+                                    </div>
+                                    <div>
+                                        <label for="city" class="form-label">City</label>
+                                        <input type="text" id="city" name="city" class="form-input" required>
+                                    </div>
+                                    <div>
+                                        <label for="state" class="form-label">State</label>
+                                        <input type="text" id="state" name="state" class="form-input" required maxlength="2">
+                                    </div>
+                                    <div>
+                                        <label for="zip" class="form-label">Zip Code</label>
+                                        <input type="text" id="zip" name="zip" class="form-input" required pattern="\d{5}">
+                                    </div>
+                                    <div>
+                                        <label for="gender" class="form-label">Gender</label>
+                                        <select id="gender" name="gender" class="form-input" required>
+                                            <option value="">Select...</option>
+                                            <option value="Male">Male</option>
+                                            <option value="Female">Female</option>
+                                            <option value="Other">Other</option>
+                                        </select>
+                                    </div>
+                                    <div class="sm:col-span-2">
+                                        <label for="date_of_birth" class="form-label">Date of Birth</label>
+                                        <input type="date" id="date_of_birth" name="date_of_birth" class="form-input" required>
+                                    </div>
+                                    <div class="sm:col-span-2">
+                                        <label for="diagnosis_year" class="form-label">Date of Incident</label>
+                                        <input type="date" id="diagnosis_year" name="diagnosis_year" class="form-input" required>
+                                    </div>
+                                </div>
+                                
+                                <input type="hidden" id="xxTrustedFormCertUrl" name="xxTrustedFormCertUrl">
+
+                                <div class="mt-8">
+                                    <button type="submit" id="submit-button" class="cta-button">
+                                        Submit My Claim for Review
+                                    </button>
+                                </div>
+
+                                <div class="mt-4">
+                                    <p class="text-xs text-slate-500 text-center">By submitting, you agree to our terms and authorize us to contact you by phone/text. This is an attorney advertisement.</p>
+                                </div>
+                            </form>
+                            <!-- End Form -->
+
+                            <div id="response-message" class="mt-4 text-center"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-white">
+        <div class="container mx-auto px-6 py-8 text-center text-slate-500">
+            <img src="perenroll.png" alt="PerEnroll Logo" class="h-8 mx-auto mb-4">
+            <p class="text-sm mt-2">
+                Disclaimer: This is an attorney advertisement. PerEnoll.com is not a law firm and does not provide legal advice. By submitting your information, you are requesting a free evaluation of your case by a participating legal professional.
+            </p>
+            <p class="text-xs mt-4">&copy; 2025 PerEnoll.com. All Rights Reserved.</p>
+        </div>
+    </footer>
+
+    <!-- JAVASCRIPT LOGIC - UNCHANGED -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const form = document.getElementById('claim-form');
+            const submitButton = document.getElementById('submit-button');
+            const responseMessage = document.getElementById('response-message');
+            form.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                if (!form.checkValidity()) {
+                    form.reportValidity();
+                    return;
+                }
+                const originalButtonText = submitButton.textContent;
+                submitButton.disabled = true;
+                submitButton.innerHTML = `
+                    <svg class="animate-spin h-5 w-5 mr-3 inline-block" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Submitting...
+                `;
+                responseMessage.textContent = '';
+                responseMessage.className = 'mt-4 text-center';
+                const formData = new FormData(form);
+                const formatDate = (dateString) => {
+                    if (!dateString) return '';
+                    const date = new Date(dateString);
+                    const userTimezoneOffset = date.getTimezoneOffset() * 60000;
+                    const adjustedDate = new Date(date.getTime() + userTimezoneOffset);
+                    const month = String(adjustedDate.getMonth() + 1).padStart(2, '0');
+                    const day = String(adjustedDate.getDate()).padStart(2, '0');
+                    const year = adjustedDate.getFullYear();
+                    return `${month}/${day}/${year}`;
+                };
+                const formatDateTime = (date) => {
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const day = String(date.getDate()).padStart(2, '0');
+                    const year = date.getFullYear();
+                    const hours = String(date.getHours()).padStart(2, '0');
+                    const minutes = String(date.getMinutes()).padStart(2, '0');
+                    return `${month}/${day}/${year} ${hours}:${minutes}`;
+                };
+                const trustedFormUrl = document.getElementById('xxTrustedFormCertUrl').value;
+                const payload = {
+                    email: formData.get('email'),
+                    fname: formData.get('fname'),
+                    lname: formData.get('lname'),
+                    date_of_birth: formatDate(formData.get('date_of_birth')),
+                    phone: formData.get('phone').replace(/\D/g, ''),
+                    country: "US",
+                    ip: "", 
+                    address: formData.get('address'),
+                    city: formData.get('city'),
+                    state: formData.get('state').toUpperCase(),
+                    zip: formData.get('zip'),
+                    offer_url: window.location.href,
+                    date_subscribed: formatDateTime(new Date()),
+                    comments: "",
+                    case_type: "Rideshare",
+                    Trusted_Form_Alt: trustedFormUrl,
+                    Jornaya: "",
+                    diagnosis: "Update after call",
+                    gender: formData.get('gender'),
+                    ownerid: "005TR00000CDuezYAD",
+                    diagnosis_year: formatDate(formData.get('diagnosis_year')),
+                    campaign: "",
+                    env: "prod"
+                };
+                const apiUrl = '/api-proxy/';
+                const username = 'Over.The.World.Sales';
+                const password = 'STD8 7CNS URtl fHof uH3f 3VZJ';
+                const authHeader = 'Basic ' + btoa(username + ':' + password);
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': authHeader
+                        },
+                        body: JSON.stringify([payload]) 
+                    });
+                    const result = await response.json();
+                    if (response.ok && result.status === 'SUCCESS') {
+                        responseMessage.textContent = 'Thank you! Your information has been submitted successfully. We will contact you shortly.';
+                        responseMessage.className = 'mt-4 p-4 text-center text-green-800 bg-green-100 rounded-lg';
+                        form.reset();
+                    } else {
+                        throw new Error(result.message || 'An unknown error occurred.');
+                    }
+                } catch (error) {
+                    console.error('Submission Error:', error);
+                    responseMessage.textContent = `Submission failed. Please try again later. (Error: ${error.message})`;
+                    responseMessage.className = 'mt-4 p-4 text-center text-red-800 bg-red-100 rounded-lg';
+                } finally {
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Submit My Claim for Review';
+                }
+            });
+        });
+    </script>
+
+</body>
+</html>
