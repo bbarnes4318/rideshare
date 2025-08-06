@@ -195,10 +195,12 @@
             form.addEventListener('submit', async (event) => {
                 console.log('Form submit event triggered');
                 event.preventDefault();
-                if (!form.checkValidity()) {
-                    form.reportValidity();
-                    return;
-                }
+                console.log('Form validity check:', form.checkValidity());
+                // Temporarily disable validation check
+                // if (!form.checkValidity()) {
+                //     form.reportValidity();
+                //     return;
+                // }
                 const originalButtonText = submitButton.textContent;
                 submitButton.disabled = true;
                 submitButton.innerHTML = `
