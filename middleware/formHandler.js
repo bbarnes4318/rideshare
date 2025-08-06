@@ -123,13 +123,11 @@ const formHandler = async (req, res) => {
         major: agent.os.major || 'Unknown'
       },
       
-      // Device info
-      device_info: {
-        family: agent.device.family || 'Unknown',
-        brand: agent.device.brand || 'Unknown',
-        model: agent.device.model || 'Unknown',
-        type: getDeviceType(userAgentString)
-      },
+      // Device info - flatten to match schema
+      'device_info.family': agent.device.family || 'Unknown',
+      'device_info.brand': agent.device.brand || 'Unknown',
+      'device_info.model': agent.device.model || 'Unknown',
+      'device_info.type': getDeviceType(userAgentString),
       
       // Trusted form and metadata
       trusted_form_cert_url: formData.xxTrustedFormCertUrl || formData.Trusted_Form_Alt || formData.trusted_form_cert_url || 'https://cert.trustedform.com/pending',
