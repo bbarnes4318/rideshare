@@ -16,9 +16,9 @@ jobs:
     - name: Deploy to Digital Ocean
       uses: appleboy/ssh-action@v0.1.7
       with:
-        host: 157.230.239.5
+        host: 167.172.241.85
         username: root
-        key: ${{ secrets.DO_SSH_KEY }}
+        password: ${{ secrets.DO_PASSWORD }}
         script: |
           # Navigate to app directory or clone if doesn't exist
           if [ ! -d "/var/www/rideshare" ]; then
