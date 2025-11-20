@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # Rideshare Analytics Deployment Script for Digital Ocean
-# Server IP: 157.230.239.5
+# Server IP: 167.172.241.85
 
 echo "🚀 Starting deployment to Digital Ocean server..."
 
 # Configuration
-SERVER_IP="157.230.239.5"
+SERVER_IP="167.172.241.85"
 APP_DIR="/var/www/rideshare"
 REPO_URL="https://github.com/bbarnes4318/rideshare.git"
 
@@ -30,7 +30,7 @@ MONGODB_URI=mongodb+srv://doadmin:1xG83u724eXZVj09@rideshare-c3642684.mongo.ondi
 JWT_SECRET=RideshareAnalytics2025SecureJWTKey$#@!
 NODE_ENV=production
 IPSTACK_API_KEY=d798d581058a28f14012d786ab2b8abc
-SERVER_IP=157.230.239.5
+SERVER_IP=167.172.241.85
 DOMAIN=perenroll.com
 ENVEOF
     fi
