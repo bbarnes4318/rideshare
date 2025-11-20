@@ -31,7 +31,7 @@ JWT_SECRET=RideshareAnalytics2025SecureJWTKey$#@!
 NODE_ENV=production
 IPSTACK_API_KEY=d798d581058a28f14012d786ab2b8abc
 SERVER_IP=167.172.241.85
-DOMAIN=perenroll.com
+DOMAIN=buyertrend.com
 ENVEOF
     fi
     
@@ -54,12 +54,12 @@ EOF
 echo "🔧 Configuring Nginx (if not already configured)..."
 ssh root@$SERVER_IP << 'EOF'
     # Check if Nginx config exists
-    if [ ! -f /etc/nginx/sites-available/perenroll.com ]; then
+    if [ ! -f /etc/nginx/sites-available/buyertrend.com ]; then
         echo "Creating Nginx configuration..."
-        cat > /etc/nginx/sites-available/perenroll.com << 'NGINXEOF'
+        cat > /etc/nginx/sites-available/buyertrend.com << 'NGINXEOF'
 server {
     listen 80;
-    server_name perenroll.com www.perenroll.com;
+    server_name buyertrend.com www.buyertrend.com;
     
     # Redirect HTTP to HTTPS (if SSL is configured)
     # return 301 https://$server_name$request_uri;
@@ -98,7 +98,7 @@ server {
 NGINXEOF
         
         # Enable the site
-        ln -s /etc/nginx/sites-available/perenroll.com /etc/nginx/sites-enabled/
+        ln -s /etc/nginx/sites-available/buyertrend.com /etc/nginx/sites-enabled/
         
         # Test Nginx configuration
         nginx -t
@@ -121,10 +121,10 @@ EOF
 echo ""
 echo "🎉 Deployment Summary:"
 echo "   • Code deployed to: /var/www/rideshare"
-echo "   • Application running on: http://157.230.239.5:5000"
-echo "   • Domain configured: perenroll.com"
-echo "   • Dashboard available at: perenroll.com/dashboard"
-echo "   • Admin login at: perenroll.com/admin"
+echo "   • Application running on: http://167.172.241.85:5000"
+echo "   • Domain configured: buyertrend.com"
+echo "   • Dashboard available at: buyertrend.com/dashboard"
+echo "   • Admin login at: buyertrend.com/admin"
 echo ""
 echo "📊 Default Login Credentials:"
 echo "   Admin: admin / password123"
