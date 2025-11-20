@@ -18,7 +18,7 @@ app.use(helmet({
 app.use(compression());
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' ? 
-    ['https://perenroll.com', 'https://www.perenroll.com'] : 
+    ['https://buyertrend.com', 'https://www.buyertrend.com'] : 
     ['http://localhost:3000', 'http://127.0.0.1:3000']
 }));
 
