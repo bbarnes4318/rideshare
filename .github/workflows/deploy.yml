@@ -13,57 +13,14 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
       
+    - name: Install sshpass
+      run: sudo apt-get install -y sshpass
+      
     - name: Deploy to Digital Ocean
-      uses: appleboy/ssh-action@v0.1.7
-      with:
-        host: 167.172.241.85
-        username: root
-        password: ${{ secrets.DO_PASSWORD }}
-        script: |
-          # Navigate to app directory or clone if doesn't exist
-          if [ ! -d "/var/www/rideshare" ]; then
-            cd /var/www
-            git clone https://github.com/bbarnes4318/rideshare.git
-            cd rideshare
-          else
-            cd /var/www/rideshare
-            git pull origin main
-          fi
-          
-          # Install dependencies
-          npm install --production
-          
-          # Create .env file if it doesn't exist
-          if [ ! -f .env ]; then
-            cat > .env << 'EOF'
-          PORT=5000
-          MONGODB_URI=mongodb+srv://doadmin:1xG83u724eXZVj09@rideshare-c3642684.mongo.ondigitalocean.com/admin?tls=true&authSource=admin
-          JWT_SECRET=RideshareAnalytics2025SecureJWTKey$#@!
-          NODE_ENV=production
-          IPSTACK_API_KEY=d798d581058a28f14012d786ab2b8abc
-          SERVER_IP=167.172.241.85
-          DOMAIN=buyertrend.com
-          EOF
-          fi
-          
-          # Create directories
-          mkdir -p exports
-          mkdir -p logs
-          
-          # Set permissions
-          chown -R www-data:www-data /var/www/rideshare
-          chmod -R 755 /var/www/rideshare
-          
-          # Restart or start PM2 app
-          pm2 restart rideshare-analytics || pm2 start server.js --name "rideshare-analytics"
-          
-          # Setup database if needed
-          npm run setup
-          
-          # Save PM2 configuration
-          pm2 save
-          
-          # Show status
-          pm2 status
-          
-          echo "✅ Deployment completed successfully!"
+      env:
+        SSHPASS: ${{ secrets.DO_PASSWORD }}
+      run: |
+        # Note: We are using the script inside deploy.sh to handle the connection
+        # but we need to make sure it's executable first
+        chmod +x deploy.sh
+        ./deploy.sh
