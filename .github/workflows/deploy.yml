@@ -41,8 +41,8 @@ jobs:
           JWT_SECRET=RideshareAnalytics2025SecureJWTKey$#@!
           NODE_ENV=production
           IPSTACK_API_KEY=d798d581058a28f14012d786ab2b8abc
-          SERVER_IP=157.230.239.5
-          DOMAIN=perenroll.com
+          SERVER_IP=167.172.241.85
+          DOMAIN=buyertrend.com
           EOF
           fi
           
