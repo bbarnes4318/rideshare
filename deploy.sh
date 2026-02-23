@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Buyertrend Deployment Script
+# FairWreck Deployment Script
 # Server IP: 167.172.241.85
 
 echo "🚀 Starting deployment to Digital Ocean server..."
@@ -9,7 +9,7 @@ echo "🚀 Starting deployment to Digital Ocean server..."
 SERVER_IP="167.172.241.85"
 APP_DIR="/var/www/rideshare"
 REPO_URL="https://github.com/bbarnes4318/rideshare.git"
-DOMAIN="buyertrend.com"
+DOMAIN="fairwreck.com"
 
 echo "📦 Pulling latest code from GitHub..."
 sshpass -p ${{ secrets.DO_PASSWORD }} ssh -o StrictHostKeyChecking=no root@$SERVER_IP << EOF
@@ -36,7 +36,7 @@ JWT_SECRET=RideshareAnalytics2025SecureJWTKey$#@!
 NODE_ENV=production
 IPSTACK_API_KEY=d798d581058a28f14012d786ab2b8abc
 SERVER_IP=167.172.241.85
-DOMAIN=buyertrend.com
+DOMAIN=fairwreck.com
 ENVEOF
     
     # Create exports directory
@@ -48,18 +48,20 @@ ENVEOF
     echo "✅ Application code updated!"
 EOF
 
-echo "🔧 Configuring Nginx for buyertrend.com..."
+echo "🔧 Configuring Nginx for fairwreck.com..."
 sshpass -p ${{ secrets.DO_PASSWORD }} ssh -o StrictHostKeyChecking=no root@$SERVER_IP << EOF
     # Clean up old configs if they exist
     rm -f /etc/nginx/sites-enabled/perenroll.com
     rm -f /etc/nginx/sites-available/perenroll.com
+    rm -f /etc/nginx/sites-enabled/buyertrend.com
+    rm -f /etc/nginx/sites-available/buyertrend.com
     rm -f /etc/nginx/sites-enabled/default
 
     # Create NEW Nginx configuration
-    cat > /etc/nginx/sites-available/buyertrend.com << 'NGINXEOF'
+    cat > /etc/nginx/sites-available/fairwreck.com << 'NGINXEOF'
 server {
     listen 80;
-    server_name buyertrend.com www.buyertrend.com;
+    server_name fairwreck.com www.fairwreck.com;
     
     location / {
         proxy_pass http://localhost:5000;
@@ -73,11 +75,16 @@ server {
 NGINXEOF
         
     # Enable the site
-    ln -sf /etc/nginx/sites-available/buyertrend.com /etc/nginx/sites-enabled/
+    ln -sf /etc/nginx/sites-available/fairwreck.com /etc/nginx/sites-enabled/
     
     # Reload Nginx to apply changes
     systemctl reload nginx
-    echo "✅ Nginx configured for buyertrend.com!"
+    echo "✅ Nginx configured for fairwreck.com!"
+
+    # Install Certbot if not present and provision SSL
+    apt-get install -y certbot python3-certbot-nginx > /dev/null 2>&1
+    certbot --nginx -d fairwreck.com -d www.fairwreck.com --non-interactive --agree-tos --email admin@fairwreck.com --redirect
+    echo "✅ SSL certificate provisioned for fairwreck.com!"
 EOF
 
 echo "✅ Deployment completed successfully!"
