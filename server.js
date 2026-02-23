@@ -9,6 +9,9 @@ require("dotenv").config();
 
 const app = express();
 
+// Trust Nginx reverse proxy so rate limiter sees real visitor IPs
+app.set('trust proxy', 1);
+
 app.use(
   helmet({
     contentSecurityPolicy: false,
@@ -32,7 +35,7 @@ app.use(
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 500,
 });
 app.use(limiter);
 
