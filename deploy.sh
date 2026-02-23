@@ -31,7 +31,7 @@ sshpass -p ${{ secrets.DO_PASSWORD }} ssh -o StrictHostKeyChecking=no root@$SERV
     echo "Updating .env file with new domain..."
     cat > .env << 'ENVEOF'
 PORT=5000
-MONGODB_URI=mongodb+srv://doadmin:1xG83u724eXZVj09@rideshare-c3642684.mongo.ondigitalocean.com/admin?tls=true&authSource=admin
+MONGODB_URI=mongodb://127.0.0.1:27017/rideshare
 JWT_SECRET=RideshareAnalytics2025SecureJWTKey$#@!
 NODE_ENV=production
 IPSTACK_API_KEY=d798d581058a28f14012d786ab2b8abc
