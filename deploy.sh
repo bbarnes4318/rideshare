@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # FairWreck Deployment Script
-# Server IP: 167.172.241.85
+# Server IP: 45.32.175.55
 
 echo "🚀 Starting deployment to Digital Ocean server..."
 
 # Configuration - UPDATED FOR NEW DOMAIN
-SERVER_IP="167.172.241.85"
+SERVER_IP="45.32.175.55"
 APP_DIR="/var/www/rideshare"
 REPO_URL="https://github.com/bbarnes4318/rideshare.git"
 DOMAIN="fairwreck.com"
@@ -35,7 +35,7 @@ MONGODB_URI=mongodb+srv://doadmin:1xG83u724eXZVj09@rideshare-c3642684.mongo.ondi
 JWT_SECRET=RideshareAnalytics2025SecureJWTKey$#@!
 NODE_ENV=production
 IPSTACK_API_KEY=d798d581058a28f14012d786ab2b8abc
-SERVER_IP=167.172.241.85
+SERVER_IP=45.32.175.55
 DOMAIN=fairwreck.com
 ENVEOF
     
