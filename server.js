@@ -71,6 +71,10 @@ app.get("/admin", (req, res) => {
 
 app.post("/api-proxy/", require("./middleware/formHandler"));
 
+app.get("/depo", (req, res) => {
+  res.sendFile(path.join(__dirname, "depo.html"));
+});
+
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
