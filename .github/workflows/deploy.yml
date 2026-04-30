@@ -1,4 +1,4 @@
-name: Deploy to Digital Ocean
+name: Deploy to AWS EC2
 
 on:
   push:
@@ -13,14 +13,15 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
       
-    - name: Install sshpass
-      run: sudo apt-get install -y sshpass
-      
-    - name: Deploy to Digital Ocean
-      env:
-        SSHPASS: ${{ secrets.DO_PASSWORD }}
-      run: |
-        # Note: We are using the script inside deploy.sh to handle the connection
-        # but we need to make sure it's executable first
-        chmod +x deploy.sh
-        ./deploy.sh
+    - name: Deploy to AWS Server
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: 98.95.177.113
+        username: ubuntu
+        key: ${{ secrets.DO_SSH_KEY }}
+        script: |
+          cd /opt/rideshare
+          git pull origin main
+          npm install --production
+          pm2 restart rideshare-analytics
+
