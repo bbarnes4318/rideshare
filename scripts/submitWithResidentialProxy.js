@@ -99,7 +99,7 @@ async function selectResidentialSession({ host, port, username, basePassword, lo
       host, port, username, password, url: SESSION_PROBE_URL,
     });
 
-    if (!result.ok || !/^d{1,3}(.d{1,3}){3}$/.test(result.body)) {
+    if (!result.ok || !/^\d{1,3}(\.\d{1,3}){3}$/.test(result.body)) {
       console.log(`  session probe ${attempt}/${SESSION_ATTEMPTS}: no usable egress`
         + ` (${result.error || `HTTP ${result.statusCode}`})`);
       continue;
