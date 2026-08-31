@@ -1,4 +1,16 @@
-name: Deploy to AWS EC2
+name: Deploy to Hetzner
+
+# Replaces the previous workflow, which deployed to a dead AWS host
+# (98.95.177.113) with a hard-coded IP and username.
+#
+# Required repository secrets:
+#   DEPLOY_HOST  - server address (5.161.123.252)
+#   DEPLOY_USER  - SSH user with access to /opt/rideshare
+#   DEPLOY_SSH_KEY - private key authorized on that server
+#
+# NOTE: the old DO_SSH_KEY secret used a private key that was committed to this
+# repository in github-secret.txt. That key is compromised and must be rotated;
+# do not reuse it here.
 
 on:
   push:
@@ -8,20 +20,15 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-      
-    - name: Deploy to AWS Server
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: 98.95.177.113
-        username: ubuntu
-        key: ${{ secrets.DO_SSH_KEY }}
-        script: |
-          cd /opt/rideshare
-          git pull origin main
-          npm install --production
-          pm2 restart rideshare-analytics
-
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            export APP_DIR=/opt/rideshare
+            export BRANCH=main
+            bash /opt/rideshare/deploy.sh
