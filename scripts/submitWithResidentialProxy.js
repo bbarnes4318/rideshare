@@ -4,7 +4,7 @@ require('dotenv').config();
 
 const { chromium } = require('playwright-core');
 const zipcodes = require('zipcodes');
-const { probeProxyConnect, describeProxyFailure } = require('./proxyDiagnostics');
+const { probeProxyConnect, describeProxyFailure, lookupIpGeo } = require('./proxyDiagnostics');
 
 const TARGET_URL = process.env.TRUSTEDFORM_TARGET_URL || 'https://quotes.nationallifecoverage.org/';
 const PROXY_HOST = process.env.IPROYAL_PROXY_HOST || 'geo.iproyal.com';
@@ -24,11 +24,15 @@ function required(name, value) {
   return String(value);
 }
 
+// IPRoyal location tokens must be lowercase alphanumeric with NO separator:
+// "_state-newyork" and "_city-losangeles" resolve, while "_state-new-york" and
+// "_city-los-angeles" are rejected outright (the proxy refuses the tunnel).
+// Verified against geo.iproyal.com:12321 on 2026-08-31.
 function normalizeProxyToken(value) {
   return String(value)
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-');
+    .replace(/[^a-z0-9]+/g, '');
 }
 
 function getZipTarget(zip) {
@@ -190,6 +194,22 @@ async function main() {
     const observedIp = await getBrowserObservedIp(page);
     console.log(`Observed outbound browser IP through IPRoyal: ${observedIp}`);
 
+    // IPRoyal widens the pool silently when the requested city has no peers,
+    // so report where the egress IP actually landed instead of assuming the
+    // city/state target was honoured.
+    const observedGeo = await lookupIpGeo(observedIp);
+    let geoTargetMatch = 'unverified (geo lookup unavailable)';
+    if (observedGeo) {
+      const cityMatch = normalizeProxyToken(observedGeo.city) === normalizeProxyToken(location.city);
+      const stateMatch = normalizeProxyToken(observedGeo.regionName) === normalizeProxyToken(location.stateName);
+      if (cityMatch && stateMatch) geoTargetMatch = 'city + state matched';
+      else if (stateMatch) geoTargetMatch = 'state matched, city did not';
+      else geoTargetMatch = 'NOT matched - IPRoyal fell back to a wider pool';
+      console.log(`Observed IP location: ${observedGeo.city}, ${observedGeo.regionName}, ${observedGeo.country}`
+        + ` (ISP: ${observedGeo.isp}, hosting: ${observedGeo.hosting})`);
+      console.log(`Geo target result: ${geoTargetMatch}`);
+    }
+
     await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded' });
 
     // TrustedForm runs in this browser session, so its network observations use
@@ -247,6 +267,9 @@ async function main() {
     console.log(`Resolved State: ${location.state} (${location.stateName})`);
     console.log(`Proxy Host: ${PROXY_HOST}:${PROXY_PORT}`);
     console.log(`Observed Browser Public IP: ${observedIp}`);
+    console.log(`Observed IP Location: ${observedGeo ? `${observedGeo.city}, ${observedGeo.regionName}` : 'unknown'}`);
+    console.log(`Observed IP ISP: ${observedGeo ? observedGeo.isp : 'unknown'}`);
+    console.log(`Geo Target Result: ${geoTargetMatch}`);
     console.log(`TrustedForm Certificate: ${trustedFormCertUrl}`);
     console.log(`Form Response:`);
     console.log(`${responseMessage}`);

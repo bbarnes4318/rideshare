@@ -65,4 +65,35 @@ function describeProxyFailure(probe) {
   return `Could not reach the IPRoyal proxy: ${probe.error}`;
 }
 
-module.exports = { probeProxyConnect, describeProxyFailure };
+/**
+ * Best-effort geolocation of the observed egress IP.
+ *
+ * IPRoyal silently widens the pool when a requested city has no available
+ * peers, so the only way to know whether the location target was actually
+ * honoured is to look up the IP that came back. Never throws: a failed lookup
+ * must not fail the submission run.
+ */
+function lookupIpGeo(ip, timeoutMs = 10000) {
+  return new Promise((resolve) => {
+    const request = http.get(
+      `http://ip-api.com/json/${ip}?fields=status,country,regionName,city,zip,isp,proxy,hosting`,
+      { timeout: timeoutMs },
+      (res) => {
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(body);
+            resolve(parsed.status === 'success' ? parsed : null);
+          } catch {
+            resolve(null);
+          }
+        });
+      },
+    );
+    request.on('timeout', () => { request.destroy(); resolve(null); });
+    request.on('error', () => resolve(null));
+  });
+}
+
+module.exports = { probeProxyConnect, describeProxyFailure, lookupIpGeo };
