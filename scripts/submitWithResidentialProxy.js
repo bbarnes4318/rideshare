@@ -49,14 +49,20 @@ function getZipTarget(zip) {
 
 function buildProxyPassword(basePassword, location) {
   // IPRoyal's documented residential router syntax supports country/state/city
-  // targeting in the password. The supplied ZIP is first resolved to its city
-  // and state because IPRoyal does not document a ZIP targeting key here.
+  // targeting in the password. We resolve the ZIP locally to its city and state.
   return [
     basePassword,
-    `country-us`,
+    'country-us',
     `state-${normalizeProxyToken(location.state)}`,
     `city-${normalizeProxyToken(location.city)}`,
   ].join('_');
+}
+
+async function getBrowserObservedIp(page) {
+  // Use the browser page itself so this check follows the exact same proxy path
+  // as the TrustedForm page and its third-party scripts.
+  await page.goto(IP_CHECK_URL, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+  return (await page.locator('body').innerText()).trim();
 }
 
 async function waitForTrustedFormCert(page) {
@@ -69,8 +75,14 @@ async function waitForTrustedFormCert(page) {
 }
 
 async function main() {
-  const username = required('IPROYAL_PROXY_USERNAME or IPRoyal username', process.env.IPROYAL_PROXY_USERNAME || process.env.IPROYAL_USERNAME);
-  const basePassword = required('IPROYAL_PROXY_PASSWORD or IPRoyal password', process.env.IPROYAL_PROXY_PASSWORD || process.env.IPROYAL_PASSWORD);
+  const username = required(
+    'IPROYAL_PROXY_USERNAME or IPRoyal username',
+    process.env.IPROYAL_PROXY_USERNAME || process.env.IPROYAL_USERNAME,
+  );
+  const basePassword = required(
+    'IPROYAL_PROXY_PASSWORD or IPrRoyal password',
+    process.env.IPROYAL_PROXY_PASSWORD || process.env.IPROYAL_PASSWORD,
+  );
   const zip = required('--zip', arg('zip', process.env.TEST_ZIP));
 
   const location = getZipTarget(zip);
@@ -121,7 +133,6 @@ async function main() {
       username,
       password: proxyPassword,
     },
-    args: ['--disable-blink-features=AutomationControlled'],
   });
 
   try {
@@ -134,13 +145,13 @@ async function main() {
     const page = await context.newPage();
     page.setDefaultTimeout(30_000);
 
-    const ipResponse = await page.request.get(IP_CHECK_URL, { timeout: 15_000 });
-    const observedIp = (await ipResponse.text()).trim();
-    console.log(`Observed outbound IP through IPRoyal: ${observedIp}`);
+    const observedIp = await getBrowserObservedIp(page);
+    console.log(`Observed outbound browser IP through IPRoyal: ${observedIp}`);
 
     await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded' });
 
-    // TrustedForm's browser script must execute from this proxied browser session.
+    // TrustedForm runs in this browser session, so its network observations use
+    // the same residential proxy as the page and its third-party requests.
     const trustedFormCertUrlPromise = waitForTrustedFormCert(page);
 
     await page.locator('#zip').fill(payload.zip);
@@ -156,7 +167,11 @@ async function main() {
     await page.locator('#heart_disease').selectOption(payload.heart_disease);
     await page.locator('#coverage_amount').selectOption(payload.coverage_amount);
     await page.locator('#height').selectOption(payload.height);
-    await page.locator('#weight').fill(payload.weight);
+    await page.locator('#weight').evaluate((element, value) => {
+      element.value = value;
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+    }, payload.weight);
     await page.locator('#address').fill(payload.address);
     await page.locator('#fname').fill(payload.fname);
     await page.locator('#lname').fill(payload.lname);
@@ -169,11 +184,11 @@ async function main() {
     await page.locator('#submit-button').click();
     await page.locator('#response-message').waitFor({ state: 'visible' });
 
-    const responseMessage = await page.locator('#response-message').innerText();
-    console.log(`Form response: ${responseMessage.trim()}`);
+    const responseMessage = (await page.locator('#response-message').innerText()).trim();
+    console.log(`Form response: ${responseMessage}`);
 
-    if (!/^✓\s*Request received/i.test(responseMessage.trim())) {
-      throw new Error(`Form submission did not report success: ${responseMessage.trim()}`);
+    if (!/^✓\s*Request received/i.test(responseMessage)) {
+      throw new Error(`Form submission did not report success: ${responseMessage}`);
     }
 
     console.log('Residential-proxy TrustedForm submission completed successfully.');
