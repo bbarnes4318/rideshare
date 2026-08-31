@@ -96,4 +96,43 @@ function lookupIpGeo(ip, timeoutMs = 10000) {
   });
 }
 
-module.exports = { probeProxyConnect, describeProxyFailure, lookupIpGeo };
+/**
+ * Fetch a URL through the proxy over plain HTTP (absolute-form request line).
+ *
+ * Used to sample a sticky session's egress IP without paying to start Chromium,
+ * so candidate sessions can be geo-checked cheaply on a shared-CPU host.
+ */
+function fetchThroughProxy({ host, port, username, password, url, timeoutMs = 30000 }) {
+  return new Promise((resolve) => {
+    const target = new URL(url);
+    const auth = Buffer.from(`${username}:${password}`).toString('base64');
+    const request = http.request(
+      {
+        host,
+        port,
+        method: 'GET',
+        path: url,
+        headers: {
+          Host: target.host,
+          'Proxy-Authorization': `Basic ${auth}`,
+          Connection: 'close',
+        },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => resolve({
+          ok: res.statusCode === 200,
+          statusCode: res.statusCode,
+          body: body.trim(),
+        }));
+      },
+    );
+    request.on('timeout', () => { request.destroy(); resolve({ ok: false, error: 'timeout' }); });
+    request.on('error', (error) => resolve({ ok: false, error: error.message }));
+    request.end();
+  });
+}
+
+module.exports = { probeProxyConnect, describeProxyFailure, lookupIpGeo, fetchThroughProxy };

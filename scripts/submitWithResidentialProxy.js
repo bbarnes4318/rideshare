@@ -4,12 +4,22 @@ require('dotenv').config();
 
 const { chromium } = require('playwright-core');
 const zipcodes = require('zipcodes');
-const { probeProxyConnect, describeProxyFailure, lookupIpGeo } = require('./proxyDiagnostics');
+const {
+  probeProxyConnect,
+  describeProxyFailure,
+  lookupIpGeo,
+  fetchThroughProxy,
+} = require('./proxyDiagnostics');
 
 const TARGET_URL = process.env.TRUSTEDFORM_TARGET_URL || 'https://quotes.nationallifecoverage.org/';
 const PROXY_HOST = process.env.IPROYAL_PROXY_HOST || 'geo.iproyal.com';
 const PROXY_PORT = Number(process.env.IPROYAL_PROXY_PORT || 12321);
 const IP_CHECK_URL = process.env.PROXY_IP_CHECK_URL || 'https://ipv4.icanhazip.com';
+// Plain-HTTP probe endpoint: sampling a session's egress IP does not need TLS,
+// and avoiding a CONNECT tunnel per probe keeps the shared-CPU host cheap.
+const SESSION_PROBE_URL = process.env.PROXY_SESSION_PROBE_URL || 'http://ipv4.icanhazip.com';
+const SESSION_ATTEMPTS = Number(process.env.IPROYAL_SESSION_ATTEMPTS || 8);
+const SESSION_LIFETIME_MINUTES = Number(process.env.IPROYAL_SESSION_LIFETIME_MINUTES || 30);
 
 function arg(name, fallback = undefined) {
   const index = process.argv.indexOf(`--${name}`);
@@ -55,15 +65,71 @@ function getZipTarget(zip) {
   };
 }
 
-function buildProxyPassword(basePassword, location) {
+function buildProxyPassword(basePassword, location, session) {
   // IPRoyal's documented residential router syntax supports country/state/city
   // targeting in the password. We resolve the ZIP locally to its city and state.
-  return [
+  const tokens = [
     basePassword,
     'country-us',
     `state-${normalizeProxyToken(location.stateName)}`,
     `city-${normalizeProxyToken(location.city)}`,
-  ].join('_');
+  ];
+
+  // A sticky session pins one residential peer for the whole run. Without it
+  // IPRoyal rotates per request, so the page load, the TrustedForm pings and
+  // the /api-proxy/ POST would each egress from a different IP.
+  if (session) {
+    tokens.push(`session-${session}`, `lifetime-${SESSION_LIFETIME_MINUTES}m`);
+  }
+
+  return tokens.join('_');
+}
+
+// Sample candidate sticky sessions over plain HTTP and keep the one whose
+// egress IP actually lands in the ZIP's city/state. IPRoyal widens the pool
+// silently when a city has no free peers, so without this the run would just
+// accept whatever US IP it was handed.
+async function selectResidentialSession({ host, port, username, basePassword, location }) {
+  let fallback = null;
+
+  for (let attempt = 1; attempt <= SESSION_ATTEMPTS; attempt += 1) {
+    const session = `nlc${attempt}${Math.random().toString(36).slice(2, 8)}`;
+    const password = buildProxyPassword(basePassword, location, session);
+    const result = await fetchThroughProxy({
+      host, port, username, password, url: SESSION_PROBE_URL,
+    });
+
+    if (!result.ok || !/^d{1,3}(.d{1,3}){3}$/.test(result.body)) {
+      console.log(`  session probe ${attempt}/${SESSION_ATTEMPTS}: no usable egress`
+        + ` (${result.error || `HTTP ${result.statusCode}`})`);
+      continue;
+    }
+
+    const ip = result.body;
+    const geo = await lookupIpGeo(ip);
+    const cityMatch = geo && normalizeProxyToken(geo.city) === normalizeProxyToken(location.city);
+    const stateMatch = geo && normalizeProxyToken(geo.regionName) === normalizeProxyToken(location.stateName);
+    const where = geo ? `${geo.city}, ${geo.regionName}` : 'unknown location';
+    console.log(`  session probe ${attempt}/${SESSION_ATTEMPTS}: ${ip} -> ${where}`);
+
+    if (cityMatch && stateMatch) {
+      console.log(`  matched ${location.city}, ${location.state} on attempt ${attempt}`);
+      return { session, password, ip, geo, match: 'city + state matched' };
+    }
+    if (stateMatch && (!fallback || fallback.match !== 'state matched, city did not')) {
+      fallback = { session, password, ip, geo, match: 'state matched, city did not' };
+    }
+    if (!fallback) {
+      fallback = { session, password, ip, geo, match: 'NOT matched - IPRoyal fell back to a wider pool' };
+    }
+  }
+
+  if (!fallback) {
+    throw new Error('No usable IPRoyal residential session after '
+      + `${SESSION_ATTEMPTS} attempts.`);
+  }
+  console.log(`  no exact city match; using best available (${fallback.match})`);
+  return fallback;
 }
 
 // The form's own submit handler emits MM/DD/YYYY, but the DOM control is an
@@ -108,7 +174,7 @@ async function main() {
   const zip = required('--zip', arg('zip', process.env.TEST_ZIP));
 
   const location = getZipTarget(zip);
-  const proxyPassword = buildProxyPassword(basePassword, location);
+  const preflightPassword = buildProxyPassword(basePassword, location);
 
   const payload = {
     zip: location.zip,
@@ -149,13 +215,23 @@ async function main() {
     host: PROXY_HOST,
     port: PROXY_PORT,
     username,
-    password: proxyPassword,
+    password: preflightPassword,
     target: `${probeTarget.hostname}:${probeTarget.port || 443}`,
   });
   if (!probe.ok) {
     throw new Error(describeProxyFailure(probe));
   }
   console.log(`IPRoyal CONNECT preflight: HTTP ${probe.statusCode} (tunnel established)`);
+
+  console.log(`Selecting a residential session near ${location.city}, ${location.state}:`);
+  const selection = await selectResidentialSession({
+    host: PROXY_HOST,
+    port: PROXY_PORT,
+    username,
+    basePassword,
+    location,
+  });
+  const proxyPassword = selection.password;
 
   const browserPath = process.env.CHROME_EXECUTABLE_PATH || process.env.CHROMIUM_EXECUTABLE_PATH;
   if (!browserPath) {
@@ -198,7 +274,7 @@ async function main() {
     // so report where the egress IP actually landed instead of assuming the
     // city/state target was honoured.
     const observedGeo = await lookupIpGeo(observedIp);
-    let geoTargetMatch = 'unverified (geo lookup unavailable)';
+    let geoTargetMatch = selection.match;
     if (observedGeo) {
       const cityMatch = normalizeProxyToken(observedGeo.city) === normalizeProxyToken(location.city);
       const stateMatch = normalizeProxyToken(observedGeo.regionName) === normalizeProxyToken(location.stateName);
