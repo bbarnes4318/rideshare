@@ -4,6 +4,7 @@ require('dotenv').config();
 
 const { chromium } = require('playwright-core');
 const zipcodes = require('zipcodes');
+const { probeProxyConnect, describeProxyFailure } = require('./proxyDiagnostics');
 
 const TARGET_URL = process.env.TRUSTEDFORM_TARGET_URL || 'https://quotes.nationallifecoverage.org/';
 const PROXY_HOST = process.env.IPROYAL_PROXY_HOST || 'geo.iproyal.com';
@@ -42,6 +43,9 @@ function getZipTarget(zip) {
     zip: normalizedZip,
     city: location.city,
     state: location.state,
+    // zipcodes reports the two-letter code (TN); IPRoyal's router expects the
+    // spelled-out state name (tennessee) in the password targeting suffix.
+    stateName: zipcodes.states.abbr[location.state] || location.state,
     latitude: location.latitude,
     longitude: location.longitude,
   };
@@ -53,9 +57,23 @@ function buildProxyPassword(basePassword, location) {
   return [
     basePassword,
     'country-us',
-    `state-${normalizeProxyToken(location.state)}`,
+    `state-${normalizeProxyToken(location.stateName)}`,
     `city-${normalizeProxyToken(location.city)}`,
   ].join('_');
+}
+
+// The form's own submit handler emits MM/DD/YYYY, but the DOM control is an
+// <input type="date">, which only accepts YYYY-MM-DD via fill(). Convert here so
+// the CLI can keep taking --dob in MM/DD/YYYY.
+function toDateInputValue(value) {
+  const raw = String(value).trim();
+  const slashed = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slashed) {
+    const [, month, day, year] = slashed;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  throw new Error(`Unsupported --dob value "${raw}". Use MM/DD/YYYY or YYYY-MM-DD.`);
 }
 
 async function getBrowserObservedIp(page) {
@@ -120,6 +138,21 @@ async function main() {
     proxyPort: PROXY_PORT,
   }, null, 2));
 
+  // Server-side diagnostic first: distinguishes an IPRoyal account/credential
+  // problem from a browser problem before Chromium is even started.
+  const probeTarget = new URL(IP_CHECK_URL);
+  const probe = await probeProxyConnect({
+    host: PROXY_HOST,
+    port: PROXY_PORT,
+    username,
+    password: proxyPassword,
+    target: `${probeTarget.hostname}:${probeTarget.port || 443}`,
+  });
+  if (!probe.ok) {
+    throw new Error(describeProxyFailure(probe));
+  }
+  console.log(`IPRoyal CONNECT preflight: HTTP ${probe.statusCode} (tunnel established)`);
+
   const browserPath = process.env.CHROME_EXECUTABLE_PATH || process.env.CHROMIUM_EXECUTABLE_PATH;
   if (!browserPath) {
     throw new Error('Set CHROME_EXECUTABLE_PATH (or CHROMIUM_EXECUTABLE_PATH) to a local Chromium/Chrome executable.');
@@ -128,6 +161,15 @@ async function main() {
   const browser = await chromium.launch({
     executablePath: browserPath,
     headless: process.env.HEADLESS !== 'false',
+    // Shared-CPU host: keep Chromium to a single lightweight instance.
+    args: [
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-background-networking',
+      '--disable-extensions',
+      '--renderer-process-limit=2',
+    ],
     proxy: {
       server: `http://${PROXY_HOST}:${PROXY_PORT}`,
       username,
@@ -153,10 +195,14 @@ async function main() {
     // TrustedForm runs in this browser session, so its network observations use
     // the same residential proxy as the page and its third-party requests.
     const trustedFormCertUrlPromise = waitForTrustedFormCert(page);
+    // Filling the form takes several seconds; keep a handler attached so a
+    // TrustedForm timeout surfaces at the await below, not as an unhandled
+    // rejection that would kill the process mid-fill.
+    trustedFormCertUrlPromise.catch(() => {});
 
     await page.locator('#zip').fill(payload.zip);
     await page.locator('#gender').selectOption({ label: payload.gender });
-    await page.locator('#date_of_birth').fill(payload.date_of_birth);
+    await page.locator('#date_of_birth').fill(toDateInputValue(payload.date_of_birth));
     await page.locator('#currently_insured').selectOption(payload.currently_insured);
     await page.locator('#credit_rating').selectOption(payload.credit_rating);
     await page.locator('#marital').selectOption(payload.marital);
@@ -182,7 +228,10 @@ async function main() {
     console.log(`TrustedForm certificate URL: ${trustedFormCertUrl}`);
 
     await page.locator('#submit-button').click();
-    await page.locator('#response-message').waitFor({ state: 'visible' });
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#response-message');
+      return !!el && el.innerText.trim().length > 0;
+    }, { timeout: 30_000 });
 
     const responseMessage = (await page.locator('#response-message').innerText()).trim();
     console.log(`Form response: ${responseMessage}`);
@@ -191,6 +240,18 @@ async function main() {
       throw new Error(`Form submission did not report success: ${responseMessage}`);
     }
 
+    console.log('');
+    console.log('===== RESIDENTIAL-PROXY TRUSTEDFORM TEST RESULT =====');
+    console.log(`Resolved ZIP: ${location.zip}`);
+    console.log(`Resolved City: ${location.city}`);
+    console.log(`Resolved State: ${location.state} (${location.stateName})`);
+    console.log(`Proxy Host: ${PROXY_HOST}:${PROXY_PORT}`);
+    console.log(`Observed Browser Public IP: ${observedIp}`);
+    console.log(`TrustedForm Certificate: ${trustedFormCertUrl}`);
+    console.log(`Form Response:`);
+    console.log(`${responseMessage}`);
+    console.log('====================================================');
+    console.log('');
     console.log('Residential-proxy TrustedForm submission completed successfully.');
   } finally {
     await browser.close();
