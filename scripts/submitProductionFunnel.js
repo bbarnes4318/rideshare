@@ -13,6 +13,7 @@
 
 require('dotenv').config();
 
+const fs = require('fs');
 const { chromium } = require('playwright-core');
 const zipcodes = require('zipcodes');
 const {
@@ -281,6 +282,26 @@ async function main() {
     const page = await context.newPage();
     page.setDefaultTimeout(45000);
 
+    // --capture <file> records everything the browser exchanges with
+    // TrustedForm, so the certificate's contents can be inspected afterwards.
+    const capturePath = arg('capture', null);
+    const captured = [];
+    if (capturePath) {
+      page.on('request', (req) => {
+        if (!/trustedform/i.test(req.url())) return;
+        captured.push({ dir: 'REQ', method: req.method(), url: req.url(), type: req.resourceType(), post: req.postData() || null });
+      });
+      page.on('response', async (res) => {
+        if (!/trustedform/i.test(res.url())) return;
+        let body = null;
+        try {
+          const ct = res.headers()['content-type'] || '';
+          if (/json|text/i.test(ct)) body = (await res.text()).slice(0, 2000);
+        } catch { /* body unavailable */ }
+        captured.push({ dir: 'RES', status: res.status(), url: res.url(), body });
+      });
+    }
+
     await page.goto(IP_CHECK_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
     observedIp = (await page.locator('body').innerText()).trim();
     observedGeo = await lookupIpGeo(observedIp);
@@ -362,10 +383,22 @@ async function main() {
     console.log('IP matches submitted ZIP: ' + (cityMatch && stateMatch ? 'YES (city + state)' : stateMatch ? 'state only' : 'NO'));
     console.log('IPRoyal Targeting Used: ' + selection.tier);
     console.log('TrustedForm Certificate: ' + trustedFormCertUrl);
+    console.log('TrustedForm Certificate ID: ' + String(trustedFormCertUrl).split('/').pop());
     console.log('Post-submit URL: ' + finalUrl);
     console.log('Post-submit page: ' + outcome);
     console.log('====================================================');
     console.log('');
+    if (capturePath) {
+      fs.writeFileSync(capturePath, JSON.stringify({
+        certUrl: trustedFormCertUrl,
+        certId: String(trustedFormCertUrl).split('/').pop(),
+        egressIp: observedIp,
+        egressGeo: observedGeo ? observedGeo.city + ', ' + observedGeo.regionName + ', ' + observedGeo.isp : null,
+        pageUrl: finalUrl,
+        events: captured,
+      }, null, 1));
+      console.log('TrustedForm capture written to ' + capturePath + ' (' + captured.length + ' events)');
+    }
     console.log('Production funnel submission completed successfully.');
   } finally {
     await browser.close();
