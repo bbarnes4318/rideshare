@@ -140,3 +140,9 @@ Thumbs.db
 *.bak
 *.backup
 *.old
+# Secrets / keys - never commit
+*.pem
+*.key
+deploy_key*
+github-secret.txt
+.env.residential-proxy
