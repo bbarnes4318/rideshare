@@ -147,6 +147,20 @@ async function selectResidentialSession({ host, port, username, basePassword, lo
   return fallback;
 }
 
+// The form's own submit handler emits MM/DD/YYYY, but the DOM control is an
+// <input type="date">, which only accepts YYYY-MM-DD via fill(). Convert here so
+// the CLI can keep taking --dob in MM/DD/YYYY.
+function toDateInputValue(value) {
+  const raw = String(value).trim();
+  const slashed = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slashed) {
+    const [, month, day, year] = slashed;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  throw new Error(`Unsupported --dob value "${raw}". Use MM/DD/YYYY or YYYY-MM-DD.`);
+}
+
 async function getBrowserObservedIp(page) {
   // Use the browser page itself so this check follows the exact same proxy path
   // as the TrustedForm page and its third-party scripts.
