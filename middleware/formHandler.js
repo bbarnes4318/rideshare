@@ -1,6 +1,7 @@
 const axios = require('axios');
 const geoip = require('geoip-lite');
 const useragent = require('useragent');
+const zipcodes = require('zipcodes');
 const Submission = require('../models/Submission');
 
 // Enhanced form handler that captures additional data
@@ -69,6 +70,15 @@ const formHandler = async (req, res) => {
     
     // Parse form data from request
     const formData = Array.isArray(req.body) ? req.body[0] : req.body;
+
+    // Derive city/state from the submitted zip code.
+    // Offline lookup - no API call, no key. Falls back to IP geolocation
+    // only if the zip is missing or does not resolve.
+    const submittedZip = formData.zip?.toString().trim().slice(0, 5);
+    const zipLookup = submittedZip ? zipcodes.lookup(submittedZip) : null;
+    if (submittedZip && !zipLookup) {
+      console.warn('Zip code did not resolve to a city/state:', submittedZip);
+    }
     
     // Parse dates
     const parseDate = (dateStr) => {
@@ -89,6 +99,30 @@ const formHandler = async (req, res) => {
       }
     };
     
+    // Normalize a Yes/No answer coming from the form
+    const yesNo = (val) => {
+      if (val === undefined || val === null || val === '') return undefined;
+      const v = String(val).trim().toLowerCase();
+      if (['y', 'yes', 'true', '1'].includes(v)) return 'Yes';
+      if (['n', 'no', 'false', '0'].includes(v)) return 'No';
+      return undefined;
+    };
+
+    // Normalize gender to the schema's enum
+    const normalizeGender = (val) => {
+      if (!val) return 'Other';
+      const v = String(val).trim().toLowerCase();
+      if (['m', 'male'].includes(v)) return 'Male';
+      if (['f', 'female'].includes(v)) return 'Female';
+      if (['x', 'non-binary', 'nonbinary', 'non binary'].includes(v)) return 'Non-Binary';
+      return 'Other';
+    };
+
+    const toNumber = (val) => {
+      const n = parseInt(val, 10);
+      return isNaN(n) ? undefined : n;
+    };
+
     // Create submission object
     const submissionData = {
       // Form fields
@@ -97,12 +131,25 @@ const formHandler = async (req, res) => {
       email: formData.email?.trim().toLowerCase(),
       phone: formData.phone?.replace(/\D/g, ''), // Remove non-digits
       address: formData.address?.trim(),
-      city: formData.city?.trim(),
-      state: formData.state?.toUpperCase(),
+      // City/state are derived from the submitted zip code, with IP geolocation as fallback
+      city: formData.city?.trim() || zipLookup?.city || geolocation.city,
+      state: (formData.state || zipLookup?.state || geolocation.region_code || geolocation.region)?.toUpperCase(),
       zip: formData.zip?.trim(),
-      gender: formData.gender ? formData.gender.charAt(0).toUpperCase() + formData.gender.slice(1).toLowerCase() : 'Other',
+      gender: normalizeGender(formData.gender),
       date_of_birth: parseDate(formData.date_of_birth),
-      diagnosis_year: parseDate(formData.diagnosis_year),
+
+      // Life insurance qualification fields
+      currently_insured: yesNo(formData.currently_insured),
+      credit_rating: formData.credit_rating?.trim().toLowerCase(),
+      marital: yesNo(formData.marital),
+      homeowner: yesNo(formData.homeowner),
+      military: yesNo(formData.military),
+      tobacco_use: yesNo(formData.tobacco_use),
+      cancer: yesNo(formData.cancer),
+      heart_disease: yesNo(formData.heart_disease),
+      coverage_amount: formData.coverage_amount?.trim(),
+      height: toNumber(formData.height),
+      weight: toNumber(formData.weight),
       
       // Technical data
       ip_address: cleanIP,
@@ -131,7 +178,7 @@ const formHandler = async (req, res) => {
       
       // Trusted form and metadata
       trusted_form_cert_url: formData.xxTrustedFormCertUrl || formData.Trusted_Form_Alt || formData.trusted_form_cert_url || 'https://cert.trustedform.com/pending',
-      case_type: formData.case_type || 'Rideshare',
+      case_type: formData.case_type || 'Life Insurance',
       ownerid: formData.ownerid || '005TR00000CDuezYAD',
       campaign: formData.campaign || '',
       offer_url: formData.offer_url || req.headers.referer || '',
@@ -186,18 +233,20 @@ const formHandler = async (req, res) => {
     if (req.body) {
       try {
         const basicData = Array.isArray(req.body) ? req.body[0] : req.body;
+        const basicZip = basicData.zip?.toString().trim().slice(0, 5);
+        const basicZipLookup = basicZip ? zipcodes.lookup(basicZip) : null;
         const basicSubmission = new Submission({
           fname: basicData.fname,
           lname: basicData.lname,
           email: basicData.email,
           phone: basicData.phone,
           address: basicData.address,
-          city: basicData.city,
-          state: basicData.state,
+          city: basicData.city || basicZipLookup?.city,
+          state: basicData.state || basicZipLookup?.state,
           zip: basicData.zip,
           gender: basicData.gender,
           date_of_birth: new Date(basicData.date_of_birth),
-          diagnosis_year: new Date(basicData.diagnosis_year),
+          coverage_amount: basicData.coverage_amount,
           ip_address: req.ip || '127.0.0.1',
           user_agent: req.headers['user-agent'] || '',
           trusted_form_cert_url: basicData.xxTrustedFormCertUrl || '',

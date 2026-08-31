@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# FairWreck Deployment Script
+# NationalLifeCoverage Deployment Script
 # Server IP: 45.32.175.55
 
 echo "🚀 Starting deployment to Digital Ocean server..."
@@ -9,7 +9,7 @@ echo "🚀 Starting deployment to Digital Ocean server..."
 SERVER_IP="45.32.175.55"
 APP_DIR="/var/www/rideshare"
 REPO_URL="https://github.com/bbarnes4318/rideshare.git"
-DOMAIN="fairwreck.com"
+DOMAIN="quotes.nationallifecoverage.org"
 
 echo "📦 Pulling latest code from GitHub..."
 sshpass -p ${{ secrets.DO_PASSWORD }} ssh -o StrictHostKeyChecking=no root@$SERVER_IP << EOF
@@ -36,7 +36,7 @@ JWT_SECRET=RideshareAnalytics2025SecureJWTKey$#@!
 NODE_ENV=production
 IPSTACK_API_KEY=d798d581058a28f14012d786ab2b8abc
 SERVER_IP=45.32.175.55
-DOMAIN=fairwreck.com
+DOMAIN=quotes.nationallifecoverage.org
 ENVEOF
     
     # Create exports directory
@@ -48,20 +48,22 @@ ENVEOF
     echo "✅ Application code updated!"
 EOF
 
-echo "🔧 Configuring Nginx for fairwreck.com..."
+echo "🔧 Configuring Nginx for quotes.nationallifecoverage.org..."
 sshpass -p ${{ secrets.DO_PASSWORD }} ssh -o StrictHostKeyChecking=no root@$SERVER_IP << EOF
     # Clean up old configs if they exist
     rm -f /etc/nginx/sites-enabled/perenroll.com
     rm -f /etc/nginx/sites-available/perenroll.com
     rm -f /etc/nginx/sites-enabled/buyertrend.com
+    rm -f /etc/nginx/sites-enabled/fairwreck.com
+    rm -f /etc/nginx/sites-available/fairwreck.com
     rm -f /etc/nginx/sites-available/buyertrend.com
     rm -f /etc/nginx/sites-enabled/default
 
     # Create NEW Nginx configuration
-    cat > /etc/nginx/sites-available/fairwreck.com << 'NGINXEOF'
+    cat > /etc/nginx/sites-available/quotes.nationallifecoverage.org << 'NGINXEOF'
 server {
     listen 80;
-    server_name fairwreck.com www.fairwreck.com;
+    server_name quotes.nationallifecoverage.org;
     
     location / {
         proxy_pass http://localhost:5000;
@@ -75,16 +77,16 @@ server {
 NGINXEOF
         
     # Enable the site
-    ln -sf /etc/nginx/sites-available/fairwreck.com /etc/nginx/sites-enabled/
+    ln -sf /etc/nginx/sites-available/quotes.nationallifecoverage.org /etc/nginx/sites-enabled/
     
     # Reload Nginx to apply changes
     systemctl reload nginx
-    echo "✅ Nginx configured for fairwreck.com!"
+    echo "✅ Nginx configured for quotes.nationallifecoverage.org!"
 
     # Install Certbot if not present and provision SSL
     apt-get install -y certbot python3-certbot-nginx > /dev/null 2>&1
-    certbot --nginx -d fairwreck.com -d www.fairwreck.com --non-interactive --agree-tos --email admin@fairwreck.com --redirect
-    echo "✅ SSL certificate provisioned for fairwreck.com!"
+    certbot --nginx -d quotes.nationallifecoverage.org --non-interactive --agree-tos --email admin@nationallifecoverage.org --redirect
+    echo "✅ SSL certificate provisioned for quotes.nationallifecoverage.org!"
 EOF
 
 echo "✅ Deployment completed successfully!"

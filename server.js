@@ -25,10 +25,8 @@ app.use(compression());
 app.use(
   cors({
     origin: [
-      "http://fairwreck.com",
-      "http://www.fairwreck.com",
-      "https://fairwreck.com",
-      "https://www.fairwreck.com",
+      "http://quotes.nationallifecoverage.org",
+      "https://quotes.nationallifecoverage.org",
     ],
   }),
 );

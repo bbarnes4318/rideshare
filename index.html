@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FairWreck | Secure Case Evaluation</title>
+    <title>NationalLifeCoverage.org | Compare Life Insurance Rates</title>
 
     <script src="https://cdn.tailwindcss.com"></script>
 
@@ -51,7 +51,7 @@
         @apply block text-sm font-medium text-gray-700 mb-1.5 ml-1;
       }
 
-      /* Button Styling - FairWreck Orange */
+      /* Button Styling - Brand Orange */
       .submit-btn {
         @apply w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 px-6 rounded-lg transition-all duration-200 shadow-lg hover:shadow-orange-500/30 flex items-center justify-center space-x-2 transform active:scale-[0.98];
       }
@@ -70,7 +70,12 @@
         class="container mx-auto px-4 md:px-6 py-4 flex justify-between items-center"
       >
         <div class="flex items-center space-x-2">
-          <img src="perenroll.png" alt="FairWreck" class="h-12 w-auto" />
+          <span class="text-xl md:text-2xl font-extrabold tracking-tight text-gray-900"
+            >National<span class="text-orange-600">Life</span>Coverage<span
+              class="text-gray-400 font-semibold"
+              >.org</span
+            ></span
+          >
         </div>
         <div class="flex items-center space-x-4 text-sm">
           <div class="hidden md:flex items-center text-gray-500">
@@ -90,10 +95,10 @@
             Secure & Confidential
           </div>
           <a
-            href="#claim-form-section"
+            href="#quote-form-section"
             class="bg-black text-white px-4 py-2 rounded-md font-medium hover:bg-gray-800 transition-colors"
           >
-            Check Eligibility
+            Get My Quote
           </a>
         </div>
       </div>
@@ -110,20 +115,20 @@
             <div
               class="inline-flex items-center px-3 py-1 rounded-full bg-orange-100 text-orange-800 text-xs font-bold uppercase tracking-wide mb-6"
             >
-              Case Evaluation Update 2025
+              2026 Rates Now Available
             </div>
             <h1
               class="text-4xl md:text-5xl lg:text-6xl font-extrabold text-gray-900 leading-tight mb-6"
             >
-              Rideshare Assault <br />
-              <span class="text-orange-600">Compensation Claims</span>
+              Affordable Life Insurance <br />
+              <span class="text-orange-600">Built Around Your Budget</span>
             </h1>
             <p
               class="text-lg md:text-xl text-gray-600 mb-8 leading-relaxed max-w-2xl"
             >
-              If you experienced physical or sexual assault during a rideshare
-              trip, you may be owed significant financial compensation. Do not
-              let your case expire.
+              Answer a few quick questions and compare coverage options from
+              licensed carriers. There is no obligation, and it takes about two
+              minutes.
             </p>
 
             <div class="grid sm:grid-cols-2 gap-6 mb-10">
@@ -146,9 +151,11 @@
                   </svg>
                 </div>
                 <div>
-                  <h3 class="font-bold text-gray-900">No Win, No Fee</h3>
+                  <h3 class="font-bold text-gray-900">
+                    No-Exam Options Available
+                  </h3>
                   <p class="text-sm text-gray-500 mt-1">
-                    You pay $0 unless your case wins a settlement.
+                    Many applicants qualify without a medical exam.
                   </p>
                 </div>
               </div>
@@ -171,9 +178,10 @@
                   </svg>
                 </div>
                 <div>
-                  <h3 class="font-bold text-gray-900">100% Confidential</h3>
+                  <h3 class="font-bold text-gray-900">Your Info Stays Secure</h3>
                   <p class="text-sm text-gray-500 mt-1">
-                    Your information is encrypted and attorney-privileged.
+                    Submitted over an encrypted connection and never sold to
+                    the public.
                   </p>
                 </div>
               </div>
@@ -183,29 +191,29 @@
               <p
                 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4"
               >
-                Trusted By Victims Nationwide
+                Licensed And Compliant Nationwide
               </p>
               <div class="flex space-x-8 grayscale opacity-60">
                 <div
-                  class="h-8 font-serif font-bold text-2xl italic text-gray-400"
+                  class="h-8 font-serif font-bold text-xl italic text-gray-400"
                 >
-                  UberLaw
+                  Licensed Agents
                 </div>
                 <div
-                  class="h-8 font-serif font-bold text-2xl italic text-gray-400"
+                  class="h-8 font-serif font-bold text-xl italic text-gray-400"
                 >
-                  LyftSuits
+                  SSL Encrypted
                 </div>
                 <div
-                  class="h-8 font-serif font-bold text-2xl italic text-gray-400"
+                  class="h-8 font-serif font-bold text-xl italic text-gray-400"
                 >
-                  LegalNews
+                  TCPA Compliant
                 </div>
               </div>
             </div>
           </div>
 
-          <div id="claim-form-section" class="lg:col-span-5">
+          <div id="quote-form-section" class="lg:col-span-5">
             <div
               class="bg-white rounded-2xl form-card border border-gray-100 overflow-hidden relative"
             >
@@ -216,18 +224,217 @@
               <div class="p-8">
                 <div class="text-center mb-8">
                   <h2 class="text-2xl font-bold text-gray-900 mb-2">
-                    Check Case Eligibility
+                    Get Your Free Quote
                   </h2>
                   <p class="text-gray-500 text-sm">
-                    Fill out the form below to see if you qualify instantly.
+                    Answer a few questions to see your personalized rates.
                   </p>
                 </div>
 
                 <form
-                  id="claim-form"
+                  id="quote-form"
                   onsubmit="return handleSubmit(event);"
                   class="space-y-5"
                 >
+                  <div>
+                    <label for="zip" class="modern-label">Zip Code</label>
+                    <input
+                      type="text"
+                      id="zip"
+                      name="zip"
+                      class="modern-input"
+                      inputmode="numeric"
+                      pattern="\d{5}"
+                      maxlength="5"
+                      placeholder="Zip Code"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label for="gender" class="modern-label">Gender</label>
+                    <select id="gender" name="gender" class="modern-input" required>
+                      <option value="" disabled selected>Select Option</option>
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Non-Binary">Non-Binary</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="date_of_birth" class="modern-label"
+                      >Date of Birth</label
+                    >
+                    <input
+                      type="date"
+                      id="date_of_birth"
+                      name="date_of_birth"
+                      class="modern-input text-gray-500"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label for="currently_insured" class="modern-label">Do you currently have a life insurance policy?</label>
+                    <select id="currently_insured" name="currently_insured" class="modern-input" required>
+                      <option value="" disabled selected>Select Option</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="credit_rating" class="modern-label">How is your credit?</label>
+                    <select id="credit_rating" name="credit_rating" class="modern-input" required>
+                      <option value="" disabled selected>Select Option</option>
+                      <option value="excellent">700+ Excellent</option>
+                      <option value="good">700-640 Good</option>
+                      <option value="fair">640-560 Fair</option>
+                      <option value="poor">560- Poor</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="marital" class="modern-label">Are you currently married?</label>
+                    <select id="marital" name="marital" class="modern-input" required>
+                      <option value="" disabled selected>Select Option</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="homeowner" class="modern-label">Are you a homeowner?</label>
+                    <select id="homeowner" name="homeowner" class="modern-input" required>
+                      <option value="" disabled selected>Select Option</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="military" class="modern-label">Have you served in the military?</label>
+                    <select id="military" name="military" class="modern-input" required>
+                      <option value="" disabled selected>Select Option</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="tobacco_use" class="modern-label">Do you regularly use tobacco products?</label>
+                    <select id="tobacco_use" name="tobacco_use" class="modern-input" required>
+                      <option value="" disabled selected>Select Option</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="cancer" class="modern-label">Have you been diagnosed with any type of cancer?</label>
+                    <select id="cancer" name="cancer" class="modern-input" required>
+                      <option value="" disabled selected>Select Option</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="heart_disease" class="modern-label">Have you been diagnosed with any type of heart disease?</label>
+                    <select id="heart_disease" name="heart_disease" class="modern-input" required>
+                      <option value="" disabled selected>Select Option</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="coverage_amount" class="modern-label">How much coverage are you looking for?</label>
+                    <select id="coverage_amount" name="coverage_amount" class="modern-input" required>
+                      <option value="" disabled selected>Select Option</option>
+                      <option value="$25,000">$25,000 (Funeral Expenses)</option>
+                      <option value="$100,000 - $249,999">$100,000 - $249,999</option>
+                      <option value="$250,000 - $499,999">$250,000 - $499,999</option>
+                      <option value="$500,000 - $999,999">$500,000 - $999,999</option>
+                      <option value="$1,000,000 or more">$1,000,000 or more</option>
+                      <option value="Unsure">Unsure</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="height" class="modern-label">What is your height?</label>
+                    <select id="height" name="height" class="modern-input" required>
+                      <option value="" disabled selected>Select Option</option>
+                      <option value="55">4'7" or below</option>
+                      <option value="56">4'8"</option>
+                      <option value="57">4'9"</option>
+                      <option value="58">4'10"</option>
+                      <option value="59">4'11"</option>
+                      <option value="60">5'0"</option>
+                      <option value="61">5'1"</option>
+                      <option value="62">5'2"</option>
+                      <option value="63">5'3"</option>
+                      <option value="64">5'4"</option>
+                      <option value="65">5'5"</option>
+                      <option value="66">5'6"</option>
+                      <option value="67">5'7"</option>
+                      <option value="68">5'8"</option>
+                      <option value="69">5'9"</option>
+                      <option value="70">5'10"</option>
+                      <option value="71">5'11"</option>
+                      <option value="72">6'0"</option>
+                      <option value="73">6'1"</option>
+                      <option value="74">6'2"</option>
+                      <option value="75">6'3"</option>
+                      <option value="76">6'4"</option>
+                      <option value="77">6'5"</option>
+                      <option value="78">6'6"</option>
+                      <option value="79">6'7"</option>
+                      <option value="80">6'8"</option>
+                      <option value="81">6'9"</option>
+                      <option value="82">6'10"</option>
+                      <option value="83">6'11" or above</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label for="weight" class="modern-label"
+                      >What is your weight?
+                      <span id="weight-readout" class="font-bold text-orange-600"
+                        >160 lbs</span
+                      ></label
+                    >
+                    <input
+                      type="range"
+                      id="weight"
+                      name="weight"
+                      class="w-full accent-orange-500"
+                      min="100"
+                      max="400"
+                      step="10"
+                      value="160"
+                      oninput="document.getElementById('weight-readout').textContent = this.value + ' lbs';"
+                    />
+                    <div class="flex justify-between text-xs text-gray-400">
+                      <span>100</span>
+                      <span>400</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label for="address" class="modern-label"
+                      >Street Address</label
+                    >
+                    <input
+                      type="text"
+                      id="address"
+                      name="address"
+                      class="modern-input"
+                      placeholder="123 Main St"
+                      required
+                    />
+                  </div>
+
                   <div class="grid grid-cols-2 gap-4">
                     <div>
                       <label for="fname" class="modern-label">First Name</label>
@@ -279,98 +486,6 @@
                     />
                   </div>
 
-                  <div>
-                    <label for="address" class="modern-label"
-                      >Street Address</label
-                    >
-                    <input
-                      type="text"
-                      id="address"
-                      name="address"
-                      class="modern-input"
-                      placeholder="123 Main St"
-                      required
-                    />
-                  </div>
-
-                  <div class="grid grid-cols-6 gap-4">
-                    <div class="col-span-3">
-                      <label for="city" class="modern-label">City</label>
-                      <input
-                        type="text"
-                        id="city"
-                        name="city"
-                        class="modern-input"
-                        required
-                      />
-                    </div>
-                    <div class="col-span-1">
-                      <label for="state" class="modern-label">State</label>
-                      <input
-                        type="text"
-                        id="state"
-                        name="state"
-                        class="modern-input"
-                        maxlength="2"
-                        placeholder="NY"
-                        required
-                      />
-                    </div>
-                    <div class="col-span-2">
-                      <label for="zip" class="modern-label">Zip</label>
-                      <input
-                        type="text"
-                        id="zip"
-                        name="zip"
-                        class="modern-input"
-                        pattern="\d{5}"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label for="gender" class="modern-label">Gender</label>
-                    <select
-                      id="gender"
-                      name="gender"
-                      class="modern-input"
-                      required
-                    >
-                      <option value="" disabled selected>Select Option</option>
-                      <option value="Male">Male</option>
-                      <option value="Female">Female</option>
-                      <option value="Other">Other</option>
-                    </select>
-                  </div>
-
-                  <div class="grid grid-cols-2 gap-4">
-                    <div>
-                      <label for="date_of_birth" class="modern-label"
-                        >Date of Birth</label
-                      >
-                      <input
-                        type="date"
-                        id="date_of_birth"
-                        name="date_of_birth"
-                        class="modern-input text-gray-500"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label for="diagnosis_year" class="modern-label"
-                        >Incident Date</label
-                      >
-                      <input
-                        type="date"
-                        id="diagnosis_year"
-                        name="diagnosis_year"
-                        class="modern-input text-gray-500"
-                        required
-                      />
-                    </div>
-                  </div>
-
                   <input
                     type="hidden"
                     id="xxTrustedFormCertUrl"
@@ -379,7 +494,7 @@
 
                   <div class="pt-4">
                     <button type="submit" id="submit-button" class="submit-btn">
-                      <span>See If I Qualify</span>
+                      <span>See My Rates</span>
                       <svg
                         class="w-5 h-5"
                         fill="none"
@@ -400,7 +515,7 @@
                     <p
                       class="text-[10px] text-gray-500 text-center leading-tight"
                     >
-                      By clicking "See If I Qualify", you certify that you are
+                      By clicking "See My Rates", you certify that you are
                       at least 18 years old and agree to our Terms & Privacy
                       Policy. You agree to receive marketing calls/texts from us
                       or our partners at the number provided, even if on a Do
@@ -452,20 +567,18 @@
     <footer class="bg-white border-t border-gray-200 mt-20">
       <div class="container mx-auto px-6 py-12 text-center">
         <div class="flex justify-center mb-6">
-          <img
-            src="perenroll.png"
-            alt="FairWreck"
-            class="h-8 w-auto opacity-80 grayscale hover:grayscale-0 transition-all"
-          />
+          <span class="text-lg font-extrabold tracking-tight text-gray-400"
+            >NationalLifeCoverage<span class="font-semibold">.org</span></span
+          >
         </div>
         <p class="text-sm text-gray-500 max-w-2xl mx-auto mb-6">
-          Disclaimer: This is an attorney advertisement. This website is not a
-          law firm and does not provide legal advice. By submitting your
-          information, you are requesting a free evaluation of your case by a
-          participating legal professional.
+          Disclaimer: NationalLifeCoverage.org is not an insurance company and
+          does not issue policies or guarantee coverage. We connect consumers
+          with licensed insurance agents and producers. Rates, eligibility and
+          available products vary by state, carrier, age and underwriting.
         </p>
         <p class="text-xs text-gray-400">
-          &copy; 2025 FairWreck. All Rights Reserved.
+          &copy; 2026 NationalLifeCoverage.org. All Rights Reserved.
         </p>
       </div>
     </footer>
@@ -490,7 +603,7 @@
         button.innerHTML =
           '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Processing...';
 
-        const form = document.getElementById("claim-form");
+        const form = document.getElementById("quote-form");
         const formData = new FormData(form);
 
         const formatDate = (dateStr) => {
@@ -508,15 +621,23 @@
           email: formData.get("email"),
           phone: formData.get("phone"),
           address: formData.get("address"),
-          city: formData.get("city"),
-          state: formData.get("state"),
           zip: formData.get("zip"),
           gender: formData.get("gender"),
           date_of_birth: formatDate(formData.get("date_of_birth")),
-          diagnosis_year: formatDate(formData.get("diagnosis_year")),
+          currently_insured: formData.get("currently_insured"),
+          credit_rating: formData.get("credit_rating"),
+          marital: formData.get("marital"),
+          homeowner: formData.get("homeowner"),
+          military: formData.get("military"),
+          tobacco_use: formData.get("tobacco_use"),
+          cancer: formData.get("cancer"),
+          heart_disease: formData.get("heart_disease"),
+          coverage_amount: formData.get("coverage_amount"),
+          height: formData.get("height"),
+          weight: formData.get("weight"),
           xxTrustedFormCertUrl: document.getElementById("xxTrustedFormCertUrl")
             .value,
-          case_type: "Rideshare",
+          case_type: "Life Insurance",
           ownerid: "005TR00000CDuezYAD",
         };
 
@@ -536,7 +657,7 @@
               message.className =
                 "mt-4 text-center text-sm font-medium text-green-600 bg-green-50 p-3 rounded-lg border border-green-100";
               message.innerHTML =
-                "✓ Application Received. An intake specialist will call you shortly.";
+                "✓ Request received. A licensed agent will call you shortly with your rates.";
               form.reset();
             } else {
               throw new Error(data.message || "Submission failed");

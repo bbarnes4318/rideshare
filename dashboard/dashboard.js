@@ -638,14 +638,30 @@ class RideshareDashboard {
                     <div class="grid grid-cols-2 gap-4 text-sm">
                         <div><strong>Gender:</strong> ${submission.gender || "N/A"}</div>
                         <div><strong>Date of Birth:</strong> ${submission.date_of_birth ? new Date(submission.date_of_birth).toLocaleDateString() : "N/A"}</div>
-                        <div><strong>Date of Incident:</strong> ${submission.diagnosis_year ? new Date(submission.diagnosis_year).toLocaleDateString() : "N/A"}</div>
+                        <div><strong>Height:</strong> ${submission.height ? Math.floor(submission.height / 12) + "'" + (submission.height % 12) + '"' : "N/A"}</div>
+                        <div><strong>Weight:</strong> ${submission.weight ? submission.weight + " lbs" : "N/A"}</div>
+                    </div>
+                </div>
+
+                <div class="mb-6">
+                    <h4 class="text-lg font-semibold text-gray-800 mb-3 border-b pb-1">Qualification</h4>
+                    <div class="grid grid-cols-2 gap-4 text-sm">
+                        <div><strong>Currently Insured:</strong> ${submission.currently_insured || "N/A"}</div>
+                        <div><strong>Coverage Wanted:</strong> ${submission.coverage_amount || "N/A"}</div>
+                        <div><strong>Credit:</strong> ${submission.credit_rating || "N/A"}</div>
+                        <div><strong>Married:</strong> ${submission.marital || "N/A"}</div>
+                        <div><strong>Homeowner:</strong> ${submission.homeowner || "N/A"}</div>
+                        <div><strong>Military:</strong> ${submission.military || "N/A"}</div>
+                        <div><strong>Tobacco:</strong> ${submission.tobacco_use || "N/A"}</div>
+                        <div><strong>Cancer:</strong> ${submission.cancer || "N/A"}</div>
+                        <div><strong>Heart Disease:</strong> ${submission.heart_disease || "N/A"}</div>
                     </div>
                 </div>
                 
                 <div class="mb-6">
                     <h4 class="text-lg font-semibold text-gray-800 mb-3 border-b pb-1">Case Details</h4>
                     <div class="grid grid-cols-2 gap-4 text-sm">
-                        <div><strong>Case Type:</strong> ${submission.case_type || "Rideshare"}</div>
+                        <div><strong>Case Type:</strong> ${submission.case_type || "Life Insurance"}</div>
                         <div><strong>Status:</strong> <span class="status-badge status-${submission.status}">${submission.status}</span></div>
                         <div><strong>Quality Score:</strong> ${submission.quality_score}/100</div>
                         <div><strong>Submitted:</strong> ${new Date(submission.submission_date).toLocaleString()}</div>

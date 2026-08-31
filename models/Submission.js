@@ -47,15 +47,59 @@ const submissionSchema = new mongoose.Schema({
   gender: {
     type: String,
     required: true,
-    enum: ['Male', 'Female', 'Other']
+    enum: ['Male', 'Female', 'Non-Binary', 'Other']
   },
   date_of_birth: {
     type: Date,
     required: true
   },
-  diagnosis_year: {
-    type: Date,
-    required: true
+
+  // Life insurance qualification fields
+  currently_insured: {
+    type: String,
+    enum: ['Yes', 'No']
+  },
+  credit_rating: {
+    type: String,
+    enum: ['excellent', 'good', 'fair', 'poor']
+  },
+  marital: {
+    type: String,
+    enum: ['Yes', 'No']
+  },
+  homeowner: {
+    type: String,
+    enum: ['Yes', 'No']
+  },
+  military: {
+    type: String,
+    enum: ['Yes', 'No']
+  },
+  tobacco_use: {
+    type: String,
+    enum: ['Yes', 'No']
+  },
+  cancer: {
+    type: String,
+    enum: ['Yes', 'No']
+  },
+  heart_disease: {
+    type: String,
+    enum: ['Yes', 'No']
+  },
+  coverage_amount: {
+    type: String,
+    trim: true
+  },
+  height: {
+    type: Number,
+    min: 55,
+    max: 83
+  },
+  weight: {
+    type: Number,
+    min: 100,
+    max: 400
   },
   
   // Technical data
@@ -110,7 +154,7 @@ const submissionSchema = new mongoose.Schema({
   // Additional metadata
   case_type: {
     type: String,
-    default: 'Rideshare'
+    default: 'Life Insurance'
   },
   ownerid: {
     type: String,
@@ -197,7 +241,7 @@ submissionSchema.methods.calculateQualityScore = function() {
   
   // Additional details (30 points)
   if (this.date_of_birth) score += 10;
-  if (this.diagnosis_year) score += 10;
+  if (this.coverage_amount) score += 10;
   if (this.gender) score += 10;
   
   // Technical quality (30 points)

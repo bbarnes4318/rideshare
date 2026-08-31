@@ -1,7 +1,7 @@
 {
   "name": "rideshare-analytics",
   "version": "1.0.0",
-  "description": "Enhanced data collection and visualization system for rideshare landing page",
+  "description": "Data collection and visualization system for the NationalLifeCoverage.org quote landing page",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -12,22 +12,23 @@
     "install-deps": "npm install"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "mongoose": "^8.0.3",
-    "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.2",
-    "helmet": "^7.1.0",
-    "express-rate-limit": "^7.1.5",
-    "compression": "^1.7.4",
     "axios": "^1.6.2",
-    "geoip-lite": "^1.4.10",
-    "useragent": "^2.3.0",
+    "bcryptjs": "^2.4.3",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
     "csv-writer": "^1.6.0",
+    "dotenv": "^16.3.1",
     "exceljs": "^4.4.0",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "geoip-lite": "^1.4.10",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "moment": "^2.29.4",
+    "mongoose": "^8.0.3",
     "pdfkit": "^0.14.0",
-    "moment": "^2.29.4"
+    "useragent": "^2.3.0",
+    "zipcodes": "^8.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
@@ -36,10 +37,10 @@
     "analytics",
     "dashboard",
     "data-visualization",
-    "rideshare",
+    "life-insurance",
     "landing-page"
   ],
-  "author": "Rideshare Analytics Team",
+  "author": "NationalLifeCoverage.org",
   "license": "MIT",
   "repository": {
     "type": "git",
