@@ -65,15 +65,21 @@ function getZipTarget(zip) {
   };
 }
 
-function buildProxyPassword(basePassword, location, session) {
-  // IPRoyal's documented residential router syntax supports country/state/city
-  // targeting in the password. We resolve the ZIP locally to its city and state.
-  const tokens = [
-    basePassword,
-    'country-us',
-    `state-${normalizeProxyToken(location.stateName)}`,
-    `city-${normalizeProxyToken(location.city)}`,
-  ];
+// IPRoyal's city vocabulary does not always match the zipcodes database (it
+// knows New York City as "newyorkcity", and has no peers at all for
+// "city-newyork"), and even a valid city can be empty at request time. Degrade
+// through progressively wider targets rather than failing the run.
+const TARGETING_TIERS = [
+  { name: 'city + state', state: true, city: true },
+  { name: 'state only', state: true, city: false },
+  { name: 'country only', state: false, city: false },
+];
+
+function buildProxyPassword(basePassword, location, session, tier = TARGETING_TIERS[0]) {
+  const tokens = [basePassword, 'country-us'];
+
+  if (tier.state) tokens.push(`state-${normalizeProxyToken(location.stateName)}`);
+  if (tier.city) tokens.push(`city-${normalizeProxyToken(location.city)}`);
 
   // A sticky session pins one residential peer for the whole run. Without it
   // IPRoyal rotates per request, so the page load, the TrustedForm pings and
@@ -92,58 +98,53 @@ function buildProxyPassword(basePassword, location, session) {
 async function selectResidentialSession({ host, port, username, basePassword, location }) {
   let fallback = null;
 
-  for (let attempt = 1; attempt <= SESSION_ATTEMPTS; attempt += 1) {
-    const session = `nlc${attempt}${Math.random().toString(36).slice(2, 8)}`;
-    const password = buildProxyPassword(basePassword, location, session);
-    const result = await fetchThroughProxy({
-      host, port, username, password, url: SESSION_PROBE_URL,
-    });
+  for (const tier of TARGETING_TIERS) {
+    console.log(`  targeting: ${tier.name}`);
+    let tierProducedEgress = false;
 
-    if (!result.ok || !/^\d{1,3}(\.\d{1,3}){3}$/.test(result.body)) {
-      console.log(`  session probe ${attempt}/${SESSION_ATTEMPTS}: no usable egress`
-        + ` (${result.error || `HTTP ${result.statusCode}`})`);
+    for (let attempt = 1; attempt <= SESSION_ATTEMPTS; attempt += 1) {
+      const session = `nlc${Math.random().toString(36).slice(2, 10)}`;
+      const password = buildProxyPassword(basePassword, location, session, tier);
+      const result = await fetchThroughProxy({ host, port, username, password, url: SESSION_PROBE_URL });
+
+      if (!result.ok || !/^\d{1,3}(\.\d{1,3}){3}$/.test(result.body)) {
+        console.log(`    probe ${attempt}/${SESSION_ATTEMPTS}: no usable egress`
+          + ` (${result.error || `HTTP ${result.statusCode}`})`);
+        continue;
+      }
+
+      tierProducedEgress = true;
+      const ip = result.body;
+      const geo = await lookupIpGeo(ip);
+      const cityMatch = geo && normalizeProxyToken(geo.city) === normalizeProxyToken(location.city);
+      const stateMatch = geo && normalizeProxyToken(geo.regionName) === normalizeProxyToken(location.stateName);
+      console.log(`    probe ${attempt}/${SESSION_ATTEMPTS}: ${ip} -> ${geo ? `${geo.city}, ${geo.regionName}` : 'unknown location'}`);
+
+      if (cityMatch && stateMatch) {
+        console.log(`  matched ${location.city}, ${location.state} via ${tier.name}`);
+        return { session, password, ip, geo, match: 'city + state matched', tier: tier.name };
+      }
+      if (stateMatch && (!fallback || fallback.match !== 'state matched, city did not')) {
+        fallback = { session, password, ip, geo, match: 'state matched, city did not', tier: tier.name };
+      } else if (!fallback) {
+        fallback = { session, password, ip, geo, match: 'NOT matched - IPRoyal fell back to a wider pool', tier: tier.name };
+      }
+    }
+
+    // A tier that never returned an egress IP means IPRoyal has no peers for
+    // that target at all; widening is the only way forward.
+    if (!tierProducedEgress) {
+      console.log(`  no peers available for ${tier.name}; widening`);
       continue;
     }
-
-    const ip = result.body;
-    const geo = await lookupIpGeo(ip);
-    const cityMatch = geo && normalizeProxyToken(geo.city) === normalizeProxyToken(location.city);
-    const stateMatch = geo && normalizeProxyToken(geo.regionName) === normalizeProxyToken(location.stateName);
-    const where = geo ? `${geo.city}, ${geo.regionName}` : 'unknown location';
-    console.log(`  session probe ${attempt}/${SESSION_ATTEMPTS}: ${ip} -> ${where}`);
-
-    if (cityMatch && stateMatch) {
-      console.log(`  matched ${location.city}, ${location.state} on attempt ${attempt}`);
-      return { session, password, ip, geo, match: 'city + state matched' };
-    }
-    if (stateMatch && (!fallback || fallback.match !== 'state matched, city did not')) {
-      fallback = { session, password, ip, geo, match: 'state matched, city did not' };
-    }
-    if (!fallback) {
-      fallback = { session, password, ip, geo, match: 'NOT matched - IPRoyal fell back to a wider pool' };
-    }
+    if (fallback && fallback.match === 'state matched, city did not') break;
   }
 
   if (!fallback) {
-    throw new Error('No usable IPRoyal residential session after '
-      + `${SESSION_ATTEMPTS} attempts.`);
+    throw new Error(`No usable IPRoyal residential session for ${location.city}, ${location.state}.`);
   }
   console.log(`  no exact city match; using best available (${fallback.match})`);
   return fallback;
-}
-
-// The form's own submit handler emits MM/DD/YYYY, but the DOM control is an
-// <input type="date">, which only accepts YYYY-MM-DD via fill(). Convert here so
-// the CLI can keep taking --dob in MM/DD/YYYY.
-function toDateInputValue(value) {
-  const raw = String(value).trim();
-  const slashed = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (slashed) {
-    const [, month, day, year] = slashed;
-    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-  }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  throw new Error(`Unsupported --dob value "${raw}". Use MM/DD/YYYY or YYYY-MM-DD.`);
 }
 
 async function getBrowserObservedIp(page) {
@@ -174,7 +175,12 @@ async function main() {
   const zip = required('--zip', arg('zip', process.env.TEST_ZIP));
 
   const location = getZipTarget(zip);
-  const preflightPassword = buildProxyPassword(basePassword, location);
+  // Country-only: this probe answers "is the account usable?" (402/407).
+  // Geo targeting is resolved afterwards by selectResidentialSession, which
+  // can widen when a city has no peers instead of aborting the run.
+  const preflightPassword = buildProxyPassword(
+    basePassword, location, null, TARGETING_TIERS[TARGETING_TIERS.length - 1],
+  );
 
   const payload = {
     zip: location.zip,
@@ -346,6 +352,7 @@ async function main() {
     console.log(`Observed IP Location: ${observedGeo ? `${observedGeo.city}, ${observedGeo.regionName}` : 'unknown'}`);
     console.log(`Observed IP ISP: ${observedGeo ? observedGeo.isp : 'unknown'}`);
     console.log(`Geo Target Result: ${geoTargetMatch}`);
+    console.log(`IPRoyal Targeting Used: ${selection.tier}`);
     console.log(`TrustedForm Certificate: ${trustedFormCertUrl}`);
     console.log(`Form Response:`);
     console.log(`${responseMessage}`);
