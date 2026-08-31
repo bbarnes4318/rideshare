@@ -70,9 +70,48 @@ city/state. **The egress IP is city/state-accurate, not ZIP-accurate.** The ZIP
 centroid latitude/longitude is printed for reference only; it is not sent to
 IPRoyal.
 
-`zipcodes` reports the two-letter state code (`TN`), while IPRoyal expects the
-spelled-out name, so the runner maps it through `zipcodes.states.abbr`
-(`TN` -> `tennessee`) before building the password.
+### Token format (measured, not assumed)
+
+IPRoyal location tokens are lowercase alphanumeric with **no separator**. A
+hyphen is not ignored - the router refuses the tunnel outright:
+
+| token | result |
+| --- | --- |
+| `_state-new-york` | no tunnel |
+| `_state-newyork` | New York IPs |
+| `_city-los-angeles` | no tunnel |
+| `_city-losangeles` | Los Angeles IPs |
+
+IPRoyal documents targeting as **country + city**, with no state token (its own
+curl/undici/requests/Java samples all use `_country-us_city-knoxville`; only the
+transport differs between languages, never the string). Measured hit rates show
+the state token over-constrains the pool:
+
+| targeting | Nashville hit rate |
+| --- | --- |
+| `_country-us_city-nashville` | 3/4 |
+| `_country-us_state-tennessee_city-nashville` | 2/4 |
+
+So the runner tries `country + city` first, then `state only`, then
+`country only`, and prints which tier produced the IP it used.
+
+`zipcodes` reports the two-letter state code (`TN`); the state tier maps it
+through `zipcodes.states.abbr` (`TN` -> `tennessee`), since IPRoyal expects the
+spelled-out name.
+
+### The city vocabulary does not always match
+
+IPRoyal names New York City `newyorkcity`; `_city-newyork` has no peers at all
+and returns 503. Any ZIP whose city IPRoyal names differently falls through to
+state targeting automatically.
+
+### Sticky sessions are required
+
+By default IPRoyal rotates the exit IP **per request**, so one run egressed from
+several peers - the browser reported `35.132.117.32` while the `/api-proxy/` POST
+arrived from `204.63.10.157`. Since TrustedForm pings throughout the session, the
+runner pins one peer with `_session-<id>_lifetime-30m` (verified: 3/3 identical
+IPs with a session, 3/3 different without).
 
 ## Preflight diagnostics
 

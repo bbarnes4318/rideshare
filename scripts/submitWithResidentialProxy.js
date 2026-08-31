@@ -65,12 +65,20 @@ function getZipTarget(zip) {
   };
 }
 
-// IPRoyal's city vocabulary does not always match the zipcodes database (it
-// knows New York City as "newyorkcity", and has no peers at all for
-// "city-newyork"), and even a valid city can be empty at request time. Degrade
-// through progressively wider targets rather than failing the run.
+// IPRoyal documents residential targeting as country + city (its own samples
+// use "_country-us_city-knoxville" with no state token). Measured against
+// geo.iproyal.com:12321, that form also lands more accurately than adding a
+// state token, which over-constrains the pool:
+//
+//   _country-us_city-nashville                   -> 3/4 Nashville
+//   _country-us_state-tennessee_city-nashville   -> 2/4 Nashville
+//
+// IPRoyal's city vocabulary also differs from the zipcodes database - it knows
+// New York City as "newyorkcity" and has no peers at all for "city-newyork" -
+// and even a valid city can be momentarily empty, so degrade through wider
+// targets rather than failing the run.
 const TARGETING_TIERS = [
-  { name: 'city + state', state: true, city: true },
+  { name: 'city (IPRoyal country+city form)', state: false, city: true },
   { name: 'state only', state: true, city: false },
   { name: 'country only', state: false, city: false },
 ];
