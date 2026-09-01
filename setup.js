@@ -14,45 +14,52 @@ async function setupDatabase() {
         
         // Check if admin user already exists
         const existingAdmin = await User.findOne({ role: 'admin' });
-        
+
         if (existingAdmin) {
             console.log('⚠️  Admin user already exists:');
             console.log(`   Username: ${existingAdmin.username}`);
             console.log(`   Email: ${existingAdmin.email}`);
         } else {
-            // Create default admin user
-            console.log('👤 Creating default admin user...');
-            
-            const adminUser = new User({
-                username: 'admin',
-                email: 'admin@perenroll.com',
-                password: 'password123', // This will be hashed automatically
-                role: 'admin'
-            });
-            
+            // The password comes from the environment and is never defaulted.
+            //
+            // This script used to create admin/password123 and a second
+            // analyst/analyst123 account. This dashboard is reachable from the
+            // internet and can start batches that submit live leads and spend
+            // proxy balance, so a known default password is not something to
+            // leave sitting on it - not even briefly, and not with a note asking
+            // someone to change it later.
+            const password = process.env.ADMIN_PASSWORD;
+            const username = process.env.ADMIN_USERNAME || 'admin';
+            const email = process.env.ADMIN_EMAIL || 'admin@example.com';
+
+            if (!password) {
+                console.error('');
+                console.error('❌ No admin user exists and ADMIN_PASSWORD is not set.');
+                console.error('');
+                console.error('   Create the first account by supplying your own password:');
+                console.error("     ADMIN_PASSWORD='your-password' ADMIN_EMAIL=you@example.com npm run setup");
+                console.error('');
+                console.error('   The password is read from the environment, hashed by the User');
+                console.error('   model, and never written to a file or printed here.');
+                process.exitCode = 1;
+                await mongoose.connection.close();
+                return;
+            }
+            if (String(password).length < 12) {
+                console.error('❌ ADMIN_PASSWORD must be at least 12 characters.');
+                process.exitCode = 1;
+                await mongoose.connection.close();
+                return;
+            }
+
+            console.log('👤 Creating admin user...');
+            const adminUser = new User({ username, email, password, role: 'admin' });
             await adminUser.save();
-            
-            console.log('✅ Admin user created successfully!');
-            console.log('📝 Default credentials:');
-            console.log('   Username: admin');
-            console.log('   Password: password123');
-            console.log('   Email: admin@perenroll.com');
-            console.log('');
-            console.log('⚠️  IMPORTANT: Please change the default password after first login!');
-        }
-        
-        // Create additional sample users if needed
-        const analystExists = await User.findOne({ role: 'analyst', username: 'analyst' });
-        if (!analystExists) {
-            const analystUser = new User({
-                username: 'analyst',
-                email: 'analyst@perenroll.com',
-                password: 'analyst123',
-                role: 'analyst'
-            });
-            
-            await analystUser.save();
-            console.log('✅ Sample analyst user created (analyst/analyst123)');
+
+            console.log('✅ Admin user created.');
+            console.log(`   Username: ${username}`);
+            console.log(`   Email:    ${email}`);
+            console.log('   Password: (the one you supplied; not shown or stored in plaintext)');
         }
         
         // Display database info
