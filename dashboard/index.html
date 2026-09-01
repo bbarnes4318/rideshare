@@ -156,6 +156,12 @@
             white-space: nowrap;
         }
 
+        @media (max-width: 900px) {
+            .cert-word {
+                display: none;
+            }
+        }
+
         .cell-sub {
             font-size: 12px;
             color: #6b7280;
@@ -201,9 +207,9 @@
             border-radius: 2px;
         }
 
-        /* Below the table breakpoint the sidebar collapses to an icon rail so
-           the content column keeps its width instead of being squeezed. */
-        @media (max-width: 1100px) {
+        /* On a narrow window the sidebar collapses to an icon rail so the
+           content column keeps its width instead of being squeezed. */
+        @media (max-width: 1023px) {
             .sidebar {
                 width: 4rem;
             }
@@ -270,9 +276,8 @@
             }
         }
 
-        /* Narrow screens: stack each row into a card so nothing is cut off
-           and there is still nothing to scroll horizontally. */
-        @media (max-width: 1100px) {
+        /* Phones only: stack each row into a card so nothing is cut off. */
+        @media (max-width: 767px) {
             .data-table {
                 max-height: none;
                 overflow-y: visible;
@@ -679,11 +684,11 @@
                             <table class="submissions-table">
                                 <colgroup>
                                     <col style="width:17%">
-                                    <col style="width:20%">
+                                    <col style="width:19%">
                                     <col style="width:10%">
                                     <col style="width:16%">
                                     <col style="width:10%">
-                                    <col style="width:8%">
+                                    <col style="width:9%">
                                     <col style="width:10%">
                                     <col style="width:9%">
                                 </colgroup>

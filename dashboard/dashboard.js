@@ -453,8 +453,8 @@ class RideshareDashboard {
         score >= 70 ? "#16a34a" : score >= 40 ? "#f59e0b" : "#dc2626";
 
       const trustedFormBadge = submission.trusted_form_cert_url
-        ? `<a href="${submission.trusted_form_cert_url}" target="_blank" title="View TrustedForm certificate" class="text-green-600 hover:text-green-800 font-semibold text-xs whitespace-nowrap">✓ Verified</a>`
-        : '<span class="text-red-500 text-xs whitespace-nowrap">No cert</span>';
+        ? `<a href="${submission.trusted_form_cert_url}" target="_blank" title="View TrustedForm certificate" class="text-green-600 hover:text-green-800 font-semibold text-xs whitespace-nowrap">✓ <span class="cert-word">Verified</span></a>`
+        : '<span class="text-red-500 text-xs whitespace-nowrap" title="No TrustedForm certificate">✗ <span class="cert-word">No cert</span></span>';
 
       row.innerHTML = `
                 <td data-label="Name">
