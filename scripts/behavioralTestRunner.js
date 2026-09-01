@@ -59,6 +59,15 @@ const BETWEEN_RUNS_MS = Number(process.env.BEHAVIOR_BETWEEN_RUNS_MS || 3000);
 // Held back from the pause budget for the certificate wait, the submit click
 // and the response, which happen after the last pause and are not pauses.
 const SUBMIT_RESERVE_MS = Number(process.env.BEHAVIOR_SUBMIT_RESERVE_MS || 2500);
+// Bootstrap for the pause budget's per-step overhead reserve, used only for the
+// first few steps before the run has measured its own. Measured live: a full
+// 16-step run spends ~18-25s outside pauses, of which typing is tracked
+// separately, leaving roughly this much per step for clicks and view swaps.
+const STEP_OVERHEAD_MS = Number(process.env.BEHAVIOR_STEP_OVERHEAD_MS || 700);
+// The final review absorbs the leftover budget, so it is allowed to run longer
+// than an ordinary pause - a long cohort legitimately spends a while on the
+// completed form before submitting.
+const FINAL_REVIEW_MAX_MS = Number(process.env.BEHAVIOR_FINAL_REVIEW_MAX_MS || 90000);
 
 function parseRange(spec, fallback) {
   if (!spec) return fallback;
@@ -94,6 +103,23 @@ function shuffle(items) {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
+}
+
+/**
+ * Characters this lead will have to type over the whole funnel.
+ *
+ * Used only to reserve typing time out of the pause budget. The funnel asks for
+ * the ZIP twice (its own first step and again on the address step), which is why
+ * that one is counted twice. Select controls are excluded: they are chosen, not
+ * typed. An overestimate is the safe direction - it reserves a little too much
+ * and lands slightly under target rather than over.
+ */
+function plannedTypingChars(lead) {
+  const typed = [
+    lead.zip, lead.zip, lead.birthDay, lead.birthYear,
+    lead.weight, lead.address, lead.fname, lead.lname, lead.email, lead.phone,
+  ];
+  return typed.reduce((total, value) => total + String(value ?? '').length, 0);
 }
 
 /** Split `total` into `parts` positive random shares. */
@@ -140,6 +166,7 @@ async function pause(ctx, ms, reason) {
   if (durationMs <= 0) return 0;
   ctx.recorder.record('pause', { durationMs, reason });
   await sleep(durationMs);
+  ctx.pausedMs += durationMs;
   return durationMs;
 }
 
@@ -174,6 +201,7 @@ async function typeValue(page, plan, ctx) {
     selector: plan.selector, field: plan.key, valueLength: plan.value.length, entryMode: ctx.entryMode,
   });
 
+  const startedAt = Date.now();
   if (ctx.entryMode === 'fill') {
     await locator.fill(plan.value).catch(() => {});
   } else {
@@ -188,9 +216,15 @@ async function typeValue(page, plan, ctx) {
       await sleep(charDelayMs(ctx.typingCpm));
     }
   }
+  // Entry time is tracked apart from per-step overhead, and the characters are
+  // struck off the reserve, so the budget stops holding back time for typing
+  // that has already happened.
+  const typedMs = Date.now() - startedAt;
+  ctx.typedMs += typedMs;
+  ctx.charsRemaining = Math.max(0, ctx.charsRemaining - plan.value.length);
 
   ctx.recorder.record('field-complete', {
-    selector: plan.selector, field: plan.key, valueLength: plan.value.length,
+    selector: plan.selector, field: plan.key, valueLength: plan.value.length, typedMs,
   });
 }
 
@@ -299,15 +333,37 @@ async function firstVisible(locator) {
 }
 
 /**
- * Remaining wall-clock budget, spread over the steps still expected.
+ * Remaining pause budget, spread over the steps still expected.
  *
  * Measured against the session clock (funnel page load), not the run clock.
  * The funnel's redirect chain costs ~9s before its page exists, and charging
- * that to the session target left short cohorts with almost no budget, so every
- * pause collapsed to its minimum and the target was reported unreachable.
+ * that to the session target left short cohorts with almost no budget.
+ *
+ * The budget is what is left for *pausing*, so it has to hold back the work
+ * still to come. Dividing the remaining wall clock by the remaining steps
+ * over-allocates every time, because those steps also spend time typing,
+ * clicking and waiting for the view to swap. Measured: a medium run had
+ * 78.6 - 24.98 = 53.62s of room and paused 69.11s, overshooting its target by
+ * exactly the 15.49s difference.
+ *
+ * Two costs are therefore reserved:
+ *   * per-step overhead - clicks, view settling, network - as the running mean
+ *     of what the steps so far actually cost outside pauses and typing;
+ *   * typing - projected from the characters still to be entered at this run's
+ *     own baseline speed. This one matters because the contact step is last and
+ *     carries most of the typing, so a running average alone under-reserves
+ *     right up until the burst it needs to pay for.
  */
 function stepBudgetMs(ctx, stepsRemaining) {
-  const remaining = ctx.targetMs - SUBMIT_RESERVE_MS - ctx.sessionElapsed();
+  const elapsed = ctx.sessionElapsed();
+  const overheadSoFar = Math.max(0, elapsed - ctx.pausedMs - ctx.typedMs);
+  const perStepOverhead = ctx.stepsEntered >= 3
+    ? overheadSoFar / ctx.stepsEntered
+    : STEP_OVERHEAD_MS;
+  const typingReserve = (ctx.charsRemaining / Math.max(1, ctx.typingCpm)) * 60000;
+  const reserve = (perStepOverhead * stepsRemaining) + typingReserve;
+
+  const remaining = ctx.targetMs - SUBMIT_RESERVE_MS - elapsed - reserve;
   if (remaining <= 0) return 0;
   const mean = remaining / Math.max(1, stepsRemaining);
   return clamp(mean * randFloat(0.45, 1.55), PAUSE_MIN_MS, Math.min(PAUSE_MAX_MS, remaining));
@@ -345,6 +401,12 @@ async function runOnce(options) {
     // against this clock rather than the run's.
     sessionStartMs: 0,
     sessionElapsed() { return Math.max(0, recorder.elapsed() - ctx.sessionStartMs); },
+    // Bookkeeping the pause budget reserves against, so it never allocates time
+    // that the remaining work is already going to spend.
+    pausedMs: 0,
+    typedMs: 0,
+    stepsEntered: 0,
+    charsRemaining: plannedTypingChars(lead),
   };
 
   const record = {
@@ -480,6 +542,7 @@ async function runOnce(options) {
       recorder.record('step-enter', {
         hash: s.hash, question: s.question || null, fieldCount: s.fields.length,
       });
+      ctx.stepsEntered += 1;
 
       const plans = s.fields.map((f) => core.planField(f, lead)).filter(Boolean);
       const ordered = profile.order(plans);
@@ -511,8 +574,22 @@ async function runOnce(options) {
       await recorder.drain(page);
 
       if (core.isFinalStep(s.fields)) {
-        await pause(ctx, Math.max(advanceBudget, PAUSE_MIN_MS), 'final-review');
-        recorder.record('final-review', { hash: s.hash, fieldsCompleted: ctx.fieldOrder.length });
+        // Reviewing the completed form before submitting is the last legitimate
+        // pause in the session, so it also absorbs whatever is left of the
+        // target. Predicting the reserve exactly is fragile in both directions -
+        // under-reserving overshot by ~16%, over-reserving undershot by ~15% -
+        // and closing the gap here corrects for whichever way the estimate went,
+        // without inventing an interaction that did not happen. If the session
+        // has already passed its target there is nothing to absorb and this
+        // falls back to the ordinary minimum pause.
+        const toTarget = ctx.targetMs - SUBMIT_RESERVE_MS - ctx.sessionElapsed();
+        const reviewMs = clamp(Math.max(advanceBudget, toTarget), PAUSE_MIN_MS, FINAL_REVIEW_MAX_MS);
+        await pause(ctx, reviewMs, 'final-review');
+        recorder.record('final-review', {
+          hash: s.hash,
+          fieldsCompleted: ctx.fieldOrder.length,
+          absorbedRemainderMs: Math.max(0, Math.round(toTarget)),
+        });
         await maybeScroll(page, ctx, 'final-review');
 
         const certUrl = await core.waitForTrustedFormCert(page).catch(() => null);
