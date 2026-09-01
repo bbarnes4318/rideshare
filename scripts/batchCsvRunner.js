@@ -82,6 +82,22 @@ function usage() {
   ].join('\n');
 }
 
+/**
+ * Write machine-readable progress for a supervising process (the dashboard).
+ *
+ * A file rather than stdout: parsing log lines to drive a UI breaks the moment
+ * the wording changes, and this is written atomically so a poller never reads a
+ * half-written object.
+ */
+function writeProgress(progressPath, state) {
+  if (!progressPath) return;
+  try {
+    const tmp = progressPath + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+    fs.renameSync(tmp, progressPath);
+  } catch { /* progress is advisory; never fail a batch over it */ }
+}
+
 /** Cohort per row. "mixed" rotates so a batch spans all three ranges. */
 function cohortFor(mode, index) {
   if (mode !== 'mixed') return mode;
@@ -130,8 +146,10 @@ async function main() {
   const reportDir = path.resolve(arg('report-dir', process.env.BEHAVIOR_REPORT_DIR || 'test-reports'));
   fs.mkdirSync(reportDir, { recursive: true });
 
-  const batchId = new Date().toISOString().replace(/[:.]/g, '-').replace(/Z$/, 'Z')
-    + '-' + Math.random().toString(36).slice(2, 8);
+  const batchId = arg('batch-id', null)
+    || (new Date().toISOString().replace(/[:.]/g, '-').replace(/Z$/, 'Z')
+      + '-' + Math.random().toString(36).slice(2, 8));
+  const progressPath = arg('progress-file', null);
   const seed = Number(arg('seed', (Math.random() * 1e9) | 0));
   const rng = qualification.mulberry32(seed);
 
@@ -160,6 +178,10 @@ async function main() {
     console.log('');
   }
   if (!selected.length) throw new Error('No usable rows in ' + inputPath);
+  writeProgress(progressPath, {
+    batchId, phase: 'starting', total: selected.length, completed: 0,
+    submitted: 0, certificates: 0, rejectedAtInput: errors.length, rows: [],
+  });
 
   // ---- test-record gate ----------------------------------------------------
   const nonTest = selected.filter((r) => !r.testRecord.isTest);
@@ -351,6 +373,27 @@ async function main() {
       datePosted: leadCsv.datePosted(),
     });
 
+    writeProgress(progressPath, {
+      batchId,
+      phase: 'running',
+      total: prepared.length,
+      completed: i + 1,
+      submitted: outputRows.length,
+      certificates: records.filter((r) => r.trustedForm && r.trustedForm.certificateUrl).length,
+      rejectedAtInput: errors.length,
+      current: row.firstName + ' ' + row.lastName,
+      rows: records.map((r) => ({
+        name: r.sourceRow ? r.sourceRow.firstName + ' ' + r.sourceRow.lastName : '?',
+        zip: r.sourceRow ? r.sourceRow.zip : null,
+        cohort: r.cohort,
+        success: !!(r.submission && r.submission.success),
+        certificateId: (r.trustedForm && r.trustedForm.certificateId) || null,
+        ip: (r.proxy && r.proxy.ip) || null,
+        durationSec: r.actualDurationSec === undefined ? null : r.actualDurationSec,
+        error: r.error || null,
+      })),
+    });
+
     console.log('');
     if (i < prepared.length - 1 && BETWEEN_RUNS_MS > 0) await sleep(BETWEEN_RUNS_MS);
   }
@@ -391,6 +434,30 @@ async function main() {
   if (os.platform() === 'linux') {
     console.log('(check for orphans with: pgrep -fa "' + path.basename(core.resolveBrowserPath()) + '")');
   }
+
+  writeProgress(progressPath, {
+    batchId,
+    phase: 'done',
+    total: records.length,
+    completed: records.length,
+    submitted,
+    certificates: certs,
+    rejectedAtInput: errors.length,
+    omitted,
+    outputCsv: outputPath,
+    batchJson: jsonPath,
+    rows: records.map((r) => ({
+      name: r.sourceRow ? r.sourceRow.firstName + ' ' + r.sourceRow.lastName : '?',
+      zip: r.sourceRow ? r.sourceRow.zip : null,
+      cohort: r.cohort,
+      success: !!(r.submission && r.submission.success),
+      certificateId: (r.trustedForm && r.trustedForm.certificateId) || null,
+      certificateUrl: (r.trustedForm && r.trustedForm.certificateUrl) || null,
+      ip: (r.proxy && r.proxy.ip) || null,
+      durationSec: r.actualDurationSec === undefined ? null : r.actualDurationSec,
+      error: r.error || null,
+    })),
+  });
 
   if (submitted !== records.length) process.exitCode = 1;
 }

@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batch CSV Test Harness</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --ink: #1b1f24; --muted: #5b6572;
+    --line: #dfe3e8; --accent: #1f6feb; --ok: #1a7f37; --warn: #9a6700;
+    --bad: #b42318; --warnbg: #fff8e6; --badbg: #fef3f2; --okbg: #ecfdf3;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+  header { background: var(--panel); border-bottom: 1px solid var(--line); padding: 18px 24px; }
+  h1 { margin: 0; font-size: 19px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  main { max-width: 1120px; margin: 24px auto; padding: 0 24px 64px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 20px; margin-bottom: 20px; }
+  .card h2 { margin: 0 0 4px; font-size: 15px; }
+  .card .sub { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+  button { font: inherit; padding: 9px 16px; border-radius: 7px; border: 1px solid var(--accent);
+    background: var(--accent); color: #fff; cursor: pointer; }
+  button.secondary { background: #fff; color: var(--ink); border-color: var(--line); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  input[type=file] { font: inherit; }
+  select { font: inherit; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--line); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line);
+    white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  .note { padding: 12px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 14px; }
+  .note.warn { background: var(--warnbg); border: 1px solid #e5c76b; color: var(--warn); }
+  .note.bad { background: var(--badbg); border: 1px solid #f3a49b; color: var(--bad); }
+  .note.ok { background: var(--okbg); border: 1px solid #96e0b0; color: var(--ok); }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px;
+    border: 1px solid var(--line); color: var(--muted); }
+  .pill.ok { color: var(--ok); border-color: #96e0b0; background: var(--okbg); }
+  .pill.bad { color: var(--bad); border-color: #f3a49b; background: var(--badbg); }
+  .bar { height: 8px; background: #e8ebef; border-radius: 999px; overflow: hidden; margin: 10px 0; }
+  .bar > div { height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+  pre { background: #f2f4f7; border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+    overflow: auto; font-size: 12px; margin: 0; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  label.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px;
+    background: var(--warnbg); border: 1px solid #e5c76b; padding: 12px; border-radius: 8px; }
+  .hidden { display: none; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Batch CSV Test Harness</h1>
+  <p>Authorized ActiveProspect experiment &mdash; each row drives a real browser through the
+     residential proxy to the live quote funnel.</p>
+</header>
+
+<main>
+  <div id="authWarn" class="note bad hidden">
+    Not signed in. <a href="/dashboard">Sign in to the dashboard</a> first, then reload this page.
+  </div>
+
+  <!-- 1. upload -->
+  <div class="card">
+    <h2>1. Upload CSV</h2>
+    <p class="sub">Headers, case-sensitive:
+      <code>First_Name, Last_Name, Gender, Age, Address, City, State, Zip, Phone, Email, DOB</code>.
+      Uploading only previews &mdash; nothing is submitted.</p>
+    <div class="row">
+      <input type="file" id="file" accept=".csv,text/csv">
+      <button id="uploadBtn">Preview</button>
+      <span id="uploadMsg" class="sub" style="margin:0"></span>
+    </div>
+  </div>
+
+  <!-- 2. preview -->
+  <div class="card hidden" id="previewCard">
+    <h2>2. Review what would be submitted</h2>
+    <p class="sub" id="previewSummary"></p>
+    <div id="rejectedNote"></div>
+    <div id="nonTestNote"></div>
+    <div class="scroll">
+      <table id="previewTable">
+        <thead><tr>
+          <th>#</th><th>Name</th><th>Test?</th><th>Cohort</th><th>Location</th><th>Phone</th>
+          <th>DOB</th><th>Insured</th><th>Married</th><th>Homeowner</th><th>Tobacco</th>
+          <th>Credit</th><th>Height</th><th>Weight</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <details style="margin-top:14px">
+      <summary class="sub" style="cursor:pointer">Distributions in force</summary>
+      <pre id="distributions"></pre>
+    </details>
+  </div>
+
+  <!-- 3. confirm -->
+  <div class="card hidden" id="confirmCard">
+    <h2>3. Confirm and run</h2>
+    <p class="sub">This submits to the live funnel and produces a real TrustedForm certificate
+       per accepted row. Runs are sequential; expect roughly 30&ndash;60 seconds per row.</p>
+    <div class="row" style="margin-bottom:14px">
+      <label>Cohort
+        <select id="cohort">
+          <option value="mixed">mixed (rotates short / medium / long)</option>
+          <option value="short">short</option>
+          <option value="medium">medium</option>
+          <option value="long">long</option>
+        </select>
+      </label>
+    </div>
+    <div id="ackWrap" class="hidden" style="margin-bottom:14px">
+      <label class="check">
+        <input type="checkbox" id="ack">
+        <span id="ackText"></span>
+      </label>
+    </div>
+    <button id="startBtn">Start batch</button>
+    <span id="startMsg" class="sub" style="margin-left:10px"></span>
+  </div>
+
+  <!-- 4. progress -->
+  <div class="card hidden" id="progressCard">
+    <h2>4. Progress</h2>
+    <p class="sub" id="progressSummary"></p>
+    <div class="bar"><div id="bar"></div></div>
+    <div class="scroll">
+      <table id="progressTable">
+        <thead><tr>
+          <th>Name</th><th>ZIP</th><th>Cohort</th><th>Result</th><th>Duration</th>
+          <th>Observed IP</th><th>Certificate</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div id="omittedNote" style="margin-top:14px"></div>
+    <div class="row" style="margin-top:16px">
+      <button id="downloadBtn" class="hidden">Download final CSV</button>
+      <button id="logBtn" class="secondary">View run log</button>
+    </div>
+    <pre id="log" class="hidden" style="margin-top:12px; max-height:320px"></pre>
+  </div>
+</main>
+
+<script>
+(function () {
+  var token = localStorage.getItem('token') || localStorage.getItem('authToken');
+  var batchId = null;
+  var poll = null;
+
+  if (!token) document.getElementById('authWarn').classList.remove('hidden');
+
+  function api(url, options) {
+    options = options || {};
+    options.headers = Object.assign({ Authorization: 'Bearer ' + token }, options.headers || {});
+    return fetch(url, options).then(function (r) {
+      if (r.status === 401 || r.status === 403) {
+        document.getElementById('authWarn').classList.remove('hidden');
+        throw new Error('Your session has expired. Sign in again.');
+      }
+      return r.json().then(function (body) {
+        if (!r.ok) throw new Error(body.message || ('HTTP ' + r.status));
+        return body;
+      });
+    });
+  }
+  function show(id) { document.getElementById(id).classList.remove('hidden'); }
+  function hide(id) { document.getElementById(id).classList.add('hidden'); }
+  function esc(s) {
+    return String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  // ---- 1. upload ----------------------------------------------------------
+  document.getElementById('uploadBtn').onclick = function () {
+    var f = document.getElementById('file').files[0];
+    var msg = document.getElementById('uploadMsg');
+    if (!f) { msg.textContent = 'Choose a .csv file first.'; return; }
+    msg.textContent = 'Reading…';
+    var reader = new FileReader();
+    reader.onload = function () {
+      api('/api/batch/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: f.name, content: reader.result }),
+      }).then(renderPreview).catch(function (e) { msg.textContent = e.message; });
+    };
+    reader.readAsText(f);
+  };
+
+  function renderPreview(data) {
+    batchId = data.batchId;
+    document.getElementById('uploadMsg').textContent = '';
+    document.getElementById('previewSummary').textContent =
+      data.usable + ' usable row(s), ' + data.rejected.length + ' rejected. Batch ' + data.batchId + '.';
+    document.getElementById('distributions').textContent = data.distributions;
+
+    var rej = document.getElementById('rejectedNote');
+    rej.innerHTML = data.rejected.length
+      ? '<div class="note bad"><b>' + data.rejected.length + ' row(s) rejected and will not be '
+        + 'submitted:</b><br>' + data.rejected.map(function (r) {
+            return 'line ' + r.lineNumber + ': ' + esc(r.error);
+          }).join('<br>') + '</div>'
+      : '';
+
+    var nt = document.getElementById('nonTestNote');
+    var ackWrap = document.getElementById('ackWrap');
+    if (data.nonTestRecords > 0) {
+      nt.innerHTML = '<div class="note warn"><b>' + data.nonTestRecords + ' row(s) are not '
+        + 'recognized as test data.</b> A row is recognized by a reserved email domain '
+        + '(example.com, .test, .invalid) or a test marker in the name. Each submission produces '
+        + 'a TrustedForm certificate, which is consent evidence about the person it names.</div>';
+      document.getElementById('ackText').textContent =
+        'I confirm these ' + data.nonTestRecords + ' non-test record(s) are authorized for '
+        + 'submission to the live funnel.';
+      ackWrap.classList.remove('hidden');
+    } else {
+      nt.innerHTML = '<div class="note ok">All rows are recognized as synthetic or authorized '
+        + 'test records.</div>';
+      ackWrap.classList.add('hidden');
+    }
+
+    var tb = document.querySelector('#previewTable tbody');
+    tb.innerHTML = data.rows.map(function (r) {
+      var g = r.generated;
+      return '<tr>'
+        + '<td>' + r.lineNumber + '</td>'
+        + '<td>' + esc(r.firstName + ' ' + r.lastName) + '</td>'
+        + '<td>' + (r.recognizedAsTestRecord
+            ? '<span class="pill ok">test</span>'
+            : '<span class="pill bad">not test</span>') + '</td>'
+        + '<td>' + esc(r.cohort) + '</td>'
+        + '<td>' + esc(r.city + ', ' + r.state + ' ' + r.zip) + '</td>'
+        + '<td>' + esc(r.phone) + '</td>'
+        + '<td>' + esc(r.dob) + '</td>'
+        + '<td>' + esc(g.currentlyInsured) + '</td>'
+        + '<td>' + esc(g.married) + '</td>'
+        + '<td>' + esc(g.homeowner) + '</td>'
+        + '<td>' + esc(g.tobacco) + '</td>'
+        + '<td>' + esc(g.creditScore) + '</td>'
+        + '<td>' + esc(g.height) + '</td>'
+        + '<td>' + esc(g.weight) + '</td>'
+        + '</tr>';
+    }).join('');
+
+    show('previewCard');
+    show('confirmCard');
+    hide('progressCard');
+  }
+
+  // ---- 3. confirm ---------------------------------------------------------
+  document.getElementById('startBtn').onclick = function () {
+    var msg = document.getElementById('startMsg');
+    var ackWrap = document.getElementById('ackWrap');
+    var needsAck = !ackWrap.classList.contains('hidden');
+    var acked = document.getElementById('ack').checked;
+    if (needsAck && !acked) { msg.textContent = 'Tick the acknowledgement first.'; return; }
+
+    this.disabled = true;
+    msg.textContent = 'Starting…';
+    api('/api/batch/' + batchId + '/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cohort: document.getElementById('cohort').value,
+        allowNonTestRecords: needsAck && acked,
+      }),
+    }).then(function () {
+      msg.textContent = 'Running.';
+      show('progressCard');
+      startPolling();
+    }).catch(function (e) {
+      msg.textContent = e.message;
+      document.getElementById('startBtn').disabled = false;
+    });
+  };
+
+  // ---- 4. progress --------------------------------------------------------
+  function startPolling() {
+    if (poll) clearInterval(poll);
+    tick();
+    poll = setInterval(tick, 3000);
+  }
+
+  function tick() {
+    api('/api/batch/' + batchId + '/status').then(function (p) {
+      var total = p.total || 0;
+      var done = p.completed || 0;
+      document.getElementById('bar').style.width = total ? Math.round((done / total) * 100) + '%' : '0';
+      document.getElementById('progressSummary').textContent =
+        p.phase + ' — ' + done + '/' + total + ' processed, ' + (p.submitted || 0)
+        + ' accepted, ' + (p.certificates || 0) + ' certificate(s)'
+        + (p.current && p.phase === 'running' ? ' — current: ' + p.current : '');
+
+      var tb = document.querySelector('#progressTable tbody');
+      tb.innerHTML = (p.rows || []).map(function (r) {
+        return '<tr>'
+          + '<td>' + esc(r.name) + '</td>'
+          + '<td>' + esc(r.zip) + '</td>'
+          + '<td>' + esc(r.cohort) + '</td>'
+          + '<td>' + (r.success
+              ? '<span class="pill ok">accepted</span>'
+              : '<span class="pill bad">not accepted</span>') + '</td>'
+          + '<td>' + (r.durationSec === null ? '' : esc(r.durationSec) + 's') + '</td>'
+          + '<td>' + esc(r.ip) + '</td>'
+          + '<td>' + (r.certificateId
+              ? '<code>' + esc(String(r.certificateId).slice(0, 12)) + '…</code>' : '') + '</td>'
+          + '</tr>';
+      }).join('');
+
+      var om = document.getElementById('omittedNote');
+      om.innerHTML = (p.omitted && p.omitted.length)
+        ? '<div class="note warn"><b>' + p.omitted.length + ' row(s) omitted from the CSV</b> '
+          + '&mdash; the funnel did not accept them. A certificate may still have been issued on '
+          + 'page load, but no lead was submitted, so the row is not written as one.<br>'
+          + p.omitted.map(function (o) {
+              return 'line ' + o.line + ' ' + esc(o.name) + ': ' + esc(o.reason);
+            }).join('<br>') + '</div>'
+        : '';
+
+      if (p.downloadReady) document.getElementById('downloadBtn').classList.remove('hidden');
+
+      if (p.phase === 'done' || p.phase === 'failed') {
+        clearInterval(poll);
+        poll = null;
+        document.getElementById('startBtn').disabled = false;
+        if (p.phase === 'failed') {
+          document.getElementById('startMsg').textContent =
+            'The batch stopped early. Open the run log for details.';
+        }
+      }
+    }).catch(function (e) {
+      document.getElementById('progressSummary').textContent = e.message;
+      if (poll) { clearInterval(poll); poll = null; }
+    });
+  }
+
+  document.getElementById('downloadBtn').onclick = function () {
+    fetch('/api/batch/' + batchId + '/download', { headers: { Authorization: 'Bearer ' + token } })
+      .then(function (r) { return r.blob(); })
+      .then(function (b) {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(b);
+        a.download = 'leads-' + batchId + '.csv';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      });
+  };
+
+  document.getElementById('logBtn').onclick = function () {
+    var pre = document.getElementById('log');
+    fetch('/api/batch/' + batchId + '/log', { headers: { Authorization: 'Bearer ' + token } })
+      .then(function (r) { return r.text(); })
+      .then(function (t) { pre.textContent = t.slice(-20000); pre.classList.remove('hidden'); });
+  };
+})();
+</script>
+</body>
+</html>

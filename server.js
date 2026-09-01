@@ -54,13 +54,21 @@ mongoose
 const submissionRoutes = require("./routes/submissions");
 const analyticsRoutes = require("./routes/analytics");
 const authRoutes = require("./routes/auth");
+const batchRoutes = require("./routes/batch");
 
 app.use("/api/submissions", submissionRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/batch", batchRoutes);
 
 app.get("/dashboard", (req, res) => {
   res.sendFile(path.join(__dirname, "dashboard", "index.html"));
+});
+
+// Batch CSV test harness UI. The page itself is static; every action it takes
+// goes through /api/batch, which sits behind the dashboard's JWT auth.
+app.get("/dashboard/batch", (req, res) => {
+  res.sendFile(path.join(__dirname, "dashboard", "batch.html"));
 });
 
 app.get("/admin", (req, res) => {
