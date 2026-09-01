@@ -42,10 +42,13 @@ class RideshareDashboard {
   initEventListeners() {
     // Navigation
     document.querySelectorAll(".nav-item").forEach((item) => {
+      // Some nav items are ordinary links to their own page (the batch
+      // upload harness). Those have no data-section, so leave the browser
+      // to follow the href instead of swallowing the click.
+      if (!item.dataset.section) return;
       item.addEventListener("click", (e) => {
         e.preventDefault();
-        const section = item.dataset.section;
-        this.switchSection(section);
+        this.switchSection(item.dataset.section);
       });
     });
 
@@ -414,43 +417,77 @@ class RideshareDashboard {
 
     tbody.innerHTML = "";
 
+    if (!submissions.length) {
+      tbody.innerHTML = `
+                <tr>
+                    <td colspan="8" class="px-4 py-10 text-center text-sm text-gray-500">
+                        No submissions match the current filters.
+                    </td>
+                </tr>
+            `;
+      return;
+    }
+
     submissions.forEach((submission) => {
       const row = document.createElement("tr");
-      row.className = "hover:bg-gray-50 cursor-pointer";
+      row.className = "hover:bg-gray-50";
 
       const statusClass = `status-${submission.status}`;
-      const date = new Date(submission.submission_date).toLocaleDateString();
-      const location = `${submission.geolocation?.city || "Unknown"}, ${submission.geolocation?.country || "Unknown"}`;
+      const submittedAt = new Date(submission.submission_date);
+      const date = submittedAt.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      });
+      const time = submittedAt.toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+      });
+      const city = submission.geolocation?.city || "Unknown";
+      const country = submission.geolocation?.country || "Unknown";
+      const location = `${city}, ${country}`;
+      const name = `${submission.fname} ${submission.lname}`;
+
+      const score = Number(submission.quality_score) || 0;
+      const scoreColor =
+        score >= 70 ? "#16a34a" : score >= 40 ? "#f59e0b" : "#dc2626";
 
       const trustedFormBadge = submission.trusted_form_cert_url
-        ? `<a href="${submission.trusted_form_cert_url}" target="_blank" class="text-green-600 hover:text-green-800 font-semibold">✓ Verified</a>`
-        : '<span class="text-red-500 text-xs">No Cert</span>';
+        ? `<a href="${submission.trusted_form_cert_url}" target="_blank" title="View TrustedForm certificate" class="text-green-600 hover:text-green-800 font-semibold text-xs whitespace-nowrap">✓ Verified</a>`
+        : '<span class="text-red-500 text-xs whitespace-nowrap">No cert</span>';
 
       row.innerHTML = `
-                <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="text-sm font-medium text-gray-900">${submission.fname} ${submission.lname}</div>
+                <td data-label="Name">
+                    <div class="cell-truncate font-medium" title="${name}">${name}</div>
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="text-sm text-gray-900">${submission.email}</div>
-                    <div class="text-sm text-gray-500">${submission.phone}</div>
+                <td data-label="Contact">
+                    <div class="cell-stack">
+                        <div class="cell-truncate" title="${submission.email}">${submission.email}</div>
+                        <div class="cell-truncate cell-sub" title="${submission.phone}">${submission.phone}</div>
+                    </div>
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap">
+                <td data-label="Cert">
                     ${trustedFormBadge}
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="text-sm text-gray-900">${location}</div>
+                <td data-label="Location">
+                    <div class="cell-truncate" title="${location}">${location}</div>
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap">
+                <td data-label="Status">
                     <span class="status-badge ${statusClass}">${submission.status}</span>
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="text-sm text-gray-900">${submission.quality_score}/100</div>
+                <td data-label="Score">
+                    <div class="cell-stack">
+                        <div class="text-gray-900">${score}</div>
+                        <div class="quality-meter"><span style="width:${Math.min(score, 100)}%;background:${scoreColor}"></span></div>
+                    </div>
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    ${date}
+                <td data-label="Date">
+                    <div class="cell-stack" title="${submittedAt.toLocaleString()}">
+                        <div class="cell-truncate">${date}</div>
+                        <div class="cell-truncate cell-sub">${time}</div>
+                    </div>
                 </td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <button class="text-blue-600 hover:text-blue-900" onclick="dashboard.viewSubmission('${submission._id}')">
+                <td data-label="">
+                    <button class="view-btn" onclick="dashboard.viewSubmission('${submission._id}')">
                         View
                     </button>
                 </td>
