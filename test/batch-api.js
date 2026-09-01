@@ -221,6 +221,30 @@ async function main() {
     assert.ok(/child\.unref\(\)/.test(src), 'the child must be unref()d');
   });
 
+  await test('the runner is told how many rows to run at once', () => {
+    // Same reasoning as the test above: asserted against the source rather than
+    // by starting a batch, because starting one submits real leads. Without the
+    // flag the runner falls back to its own default and the dashboard control
+    // silently does nothing.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'batch.js'), 'utf8');
+    assert.ok(/'--concurrency', String\(concurrency\)/.test(src),
+      'spawn must pass --concurrency');
+    assert.ok(/pool\.clampConcurrency\(body\.concurrency/.test(src),
+      'the client-supplied value must be clamped, not trusted');
+  });
+
+  await test('the listing advertises the concurrency the server will accept', async () => {
+    // The page builds its control from these, so a stale hard-coded list in the
+    // dashboard cannot offer a value this server would refuse.
+    const res = await request('GET', '/api/batch');
+    assert.strictEqual(typeof res.body.maxConcurrency, 'number');
+    assert.strictEqual(typeof res.body.defaultConcurrency, 'number');
+    assert.ok(res.body.maxConcurrency >= 1);
+    assert.ok(res.body.defaultConcurrency >= 1);
+    assert.ok(res.body.defaultConcurrency <= res.body.maxConcurrency,
+      res.body.defaultConcurrency + ' > ' + res.body.maxConcurrency);
+  });
+
   await test('download 404s until a batch has produced output', async () => {
     const res = await request('GET', '/api/batch/' + batchId + '/download');
     assert.strictEqual(res.status, 404);

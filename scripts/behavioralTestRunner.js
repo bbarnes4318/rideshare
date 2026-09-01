@@ -471,6 +471,13 @@ async function runOnce(options) {
     reportDir, batchId, offline,
   } = options;
 
+  // The batch harness runs several rows at once, so its lines interleave. It
+  // passes a prefix identifying the row; an unprefixed "run failed" would
+  // belong to nobody. On its own (the CLI harness) this is the empty string
+  // and the output is byte-for-byte what it always was.
+  const logPrefix = options.logPrefix || '';
+  const say = (message) => console.log(logPrefix + message);
+
   const recorder = new Recorder();
   const profile = FIELD_ORDER_PROFILES[Math.floor(Math.random() * FIELD_ORDER_PROFILES.length)];
   // Short sessions get a faster baseline typist, long sessions a slower one;
@@ -548,6 +555,7 @@ async function runOnce(options) {
         username: credentials.username,
         basePassword: credentials.basePassword,
         location,
+        log: say,
       });
       record.proxy.targeting = proxySelection.tier;
     }
@@ -592,7 +600,7 @@ async function runOnce(options) {
         record.proxy.matchesZip = cityMatch && stateMatch ? 'city+state' : stateMatch ? 'state-only' : 'no';
       }
       record.proxyGeoRaw = observedGeo || null;
-      console.log('    egress IP ' + observedIp + ' -> '
+      say('    egress IP ' + observedIp + ' -> '
         + (observedGeo ? observedGeo.city + ', ' + observedGeo.regionName : 'unknown')
         + ' (' + record.proxy.matchesZip + ')');
     }
@@ -787,7 +795,7 @@ async function runOnce(options) {
     if (!submitted) throw new Error('Never reached the contact step; nothing was submitted.');
   } catch (error) {
     record.error = error.message;
-    console.log('    run failed: ' + error.message);
+    say('    run failed: ' + error.message);
   } finally {
     if (context) {
       recorder.record('context-close', {});

@@ -12,7 +12,8 @@
 //   * uploading only previews; nothing is submitted until an explicit confirm
 //   * the preview shows exactly which rows are not recognized as test data, and
 //     submitting those requires a separate explicit acknowledgement
-//   * only one batch runs at a time, because each row drives a real browser
+//   * only one batch runs at a time; its own rows run several at a time, up to
+//     a concurrency the host's memory can actually carry
 //   * the client never supplies a path or a CLI flag; all of that is fixed here
 //
 
@@ -23,6 +24,7 @@ const path = require('path');
 
 const { authenticateToken } = require('../middleware/auth');
 const leadCsv = require('../scripts/lib/leadCsv');
+const pool = require('../scripts/lib/pool');
 const qualification = require('../scripts/lib/qualification');
 
 const router = express.Router();
@@ -32,6 +34,17 @@ const REPORT_DIR = path.resolve(process.env.BEHAVIOR_REPORT_DIR
   || path.join(__dirname, '..', 'test-reports'));
 const UPLOAD_DIR = path.join(REPORT_DIR, 'uploads');
 const MAX_CSV_BYTES = Number(process.env.BATCH_MAX_CSV_BYTES || 2 * 1024 * 1024);
+
+// How many rows of a batch may be in flight at once. Each one is a full
+// Chromium process through its own residential session, so the ceiling is the
+// host's RAM rather than anything the funnel imposes: budget ~600MB per
+// concurrent row and leave the server its own headroom. The 8GB/4-vCPU host
+// this runs on takes 4 comfortably, which is why that is the cap unless an
+// operator raises it.
+const MAX_CONCURRENCY = pool.clampConcurrency(process.env.BATCH_MAX_CONCURRENCY, { fallback: 4 });
+const DEFAULT_CONCURRENCY = pool.clampConcurrency(process.env.BATCH_CONCURRENCY, {
+  fallback: 3, max: MAX_CONCURRENCY,
+});
 
 // One batch at a time: every row launches a browser through a residential
 // proxy, and overlapping batches would fight for CPU and for proxy sessions.
@@ -260,8 +273,9 @@ router.post('/:batchId/start', authenticateToken, jsonBody, (req, res) => {
 
   if (activeBatchId) {
     return res.status(409).json({
-      message: 'A batch is already running (' + activeBatchId + '). Each row drives a real '
-        + 'browser through the proxy, so batches run one at a time.',
+      message: 'A batch is already running (' + activeBatchId + '). Its rows already run '
+        + 'several at a time up to the concurrency limit, and a second batch on top of '
+        + 'that would oversubscribe the host, so batches still run one at a time.',
       activeBatchId,
     });
   }
@@ -275,6 +289,12 @@ router.post('/:batchId/start', authenticateToken, jsonBody, (req, res) => {
   const body = req.body || {};
   const allowNonTest = body.allowNonTestRecords === true;
   const cohort = ['short', 'medium', 'long', 'mixed'].includes(body.cohort) ? body.cohort : 'mixed';
+  // Clamped rather than validated: the client picks from a list this server
+  // handed it, and a batch should not fail to start because that list was
+  // stale. The runner clamps again on its own account.
+  const concurrency = pool.clampConcurrency(body.concurrency, {
+    fallback: DEFAULT_CONCURRENCY, max: MAX_CONCURRENCY,
+  });
 
   // Re-check the gate here rather than trusting the client: the preview is
   // advisory, this is the decision point.
@@ -309,6 +329,7 @@ router.post('/:batchId/start', authenticateToken, jsonBody, (req, res) => {
     '--progress-file', progressPath,
     '--batch-id', batchId,
     '--cohort', cohort,
+    '--concurrency', String(concurrency),
   ];
   if (meta.seed !== undefined && meta.seed !== null) args.push('--seed', String(meta.seed));
   if (Number.isInteger(body.limit) && body.limit > 0) args.push('--limit', String(body.limit));
@@ -331,12 +352,12 @@ router.post('/:batchId/start', authenticateToken, jsonBody, (req, res) => {
   activeBatchId = batchId;
   fs.writeFileSync(progressPath, JSON.stringify({
     batchId, phase: 'starting', total: loaded.rows.length, completed: 0,
-    submitted: 0, certificates: 0, rows: [],
+    submitted: 0, certificates: 0, concurrency, rows: [],
   }, null, 2));
   fs.writeFileSync(path.join(dir, 'started.json'), JSON.stringify({
     startedAt: new Date().toISOString(),
     startedBy: (req.user && (req.user.email || req.user.username)) || null,
-    pid: child.pid, cohort, allowNonTestRecords: allowNonTest,
+    pid: child.pid, cohort, concurrency, allowNonTestRecords: allowNonTest,
   }, null, 2));
 
   child.on('exit', (code) => {
@@ -353,7 +374,7 @@ router.post('/:batchId/start', authenticateToken, jsonBody, (req, res) => {
     }
   });
 
-  res.status(202).json({ batchId, started: true, pid: child.pid, cohort });
+  res.status(202).json({ batchId, started: true, pid: child.pid, cohort, concurrency });
 });
 
 // ---------------------------------------------------------------------------
@@ -419,7 +440,8 @@ router.get('/:batchId/log', authenticateToken, (req, res) => {
 // ---------------------------------------------------------------------------
 
 router.get('/', authenticateToken, (req, res) => {
-  if (!fs.existsSync(UPLOAD_DIR)) return res.json({ activeBatchId, batches: [] });
+  const limits = { defaultConcurrency: DEFAULT_CONCURRENCY, maxConcurrency: MAX_CONCURRENCY };
+  if (!fs.existsSync(UPLOAD_DIR)) return res.json({ activeBatchId, ...limits, batches: [] });
   const batches = fs.readdirSync(UPLOAD_DIR)
     .filter((id) => BATCH_ID.test(id))
     .map((id) => {
@@ -441,7 +463,7 @@ router.get('/', authenticateToken, (req, res) => {
     })
     .sort((a, b) => String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')))
     .slice(0, 50);
-  res.json({ activeBatchId, batches });
+  res.json({ activeBatchId, ...limits, batches });
 });
 
 // Runs at require time, i.e. once per server start - exactly when the in-memory

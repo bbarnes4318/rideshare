@@ -19,6 +19,12 @@ function test(name, fn) {
   }
 }
 
+// The worker pool is the one thing here that cannot be checked synchronously.
+// Async cases are queued and drained at the end rather than making this whole
+// file async, so every existing test keeps running exactly as it did.
+const asyncTests = [];
+function testAsync(name, fn) { asyncTests.push({ name, fn }); }
+
 // The core reads --flags from process.argv; give it the values the tests need.
 process.argv.push(
   '--dob', '07/09/1982', '--address', '88 Morgan St', '--fname', 'Dana',
@@ -459,9 +465,123 @@ test('an unspecified gender still gets a height and weight, and is flagged', () 
   assert.strictEqual(qual.toFunnelAnswers(q, 'non-binary')['#/gender'], 'Non-Binary');
 });
 
+// ---------------------------------------------------------------------------
 console.log('');
-console.log(passed + ' passed, ' + failures.length + ' failed');
-if (failures.length) {
-  for (const f of failures) console.error('\n' + f.name + '\n' + f.error.stack);
-  process.exitCode = 1;
-}
+console.log('pool');
+
+const pool = require('../scripts/lib/pool');
+
+test('clampConcurrency floors, bounds and falls back rather than throwing', () => {
+  assert.strictEqual(pool.clampConcurrency(3), 3);
+  assert.strictEqual(pool.clampConcurrency('4'), 4);
+  assert.strictEqual(pool.clampConcurrency(2.9), 2);
+  assert.strictEqual(pool.clampConcurrency(0), 1);
+  assert.strictEqual(pool.clampConcurrency(-5), 1);
+  assert.strictEqual(pool.clampConcurrency(999), pool.MAX_CONCURRENCY);
+  assert.strictEqual(pool.clampConcurrency(8, { max: 4 }), 4);
+  // A blank env var or an absent JSON field must not stop a batch starting.
+  assert.strictEqual(pool.clampConcurrency(undefined, { fallback: 3 }), 3);
+  assert.strictEqual(pool.clampConcurrency('', { fallback: 3 }), 3);
+  assert.strictEqual(pool.clampConcurrency('nonsense', { fallback: 3 }), 3);
+  // Even a fallback is bounded by the caller's ceiling.
+  assert.strictEqual(pool.clampConcurrency(null, { fallback: 9, max: 4 }), 4);
+});
+
+testAsync('runPool never exceeds its concurrency, and does use it', async () => {
+  let inFlight = 0;
+  let peak = 0;
+  await pool.runPool({
+    items: Array.from({ length: 12 }, (_, i) => i),
+    concurrency: 4,
+    run: async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 10));
+      inFlight -= 1;
+    },
+  });
+  assert.strictEqual(peak, 4, 'peak in flight was ' + peak);
+  assert.strictEqual(inFlight, 0);
+});
+
+testAsync('runPool returns results in INPUT order however they finish', async () => {
+  // Reverse-ordered delays, so the last item finishes first. The output CSV and
+  // the forensic record are specified to be in input order regardless.
+  const items = [0, 1, 2, 3, 4, 5];
+  const results = await pool.runPool({
+    items,
+    concurrency: 6,
+    run: async (item) => {
+      await new Promise((r) => setTimeout(r, (items.length - item) * 8));
+      return 'row' + item;
+    },
+  });
+  assert.deepStrictEqual(results.map((r) => r.value), ['row0', 'row1', 'row2', 'row3', 'row4', 'row5']);
+  assert.deepStrictEqual(results.map((r) => r.index), [0, 1, 2, 3, 4, 5]);
+});
+
+testAsync('one row throwing is recorded, and the rest of the batch still runs', async () => {
+  const results = await pool.runPool({
+    items: [1, 2, 3],
+    concurrency: 2,
+    run: async (item) => {
+      if (item === 2) throw new Error('funnel stalled');
+      return item * 10;
+    },
+  });
+  assert.strictEqual(results[0].value, 10);
+  assert.strictEqual(results[1].value, null);
+  assert.strictEqual(results[1].error.message, 'funnel stalled');
+  assert.strictEqual(results[2].value, 30);
+});
+
+testAsync('onSettled sees every row that has landed, as it lands', async () => {
+  const seen = [];
+  await pool.runPool({
+    items: ['a', 'b', 'c', 'd'],
+    concurrency: 2,
+    run: async (item) => item.toUpperCase(),
+    // Whatever has completed must already be readable here: this is what lets
+    // the CSV and the progress file be written while a batch is still running.
+    onSettled: (settled, all) => { seen.push(all.filter(Boolean).length); },
+  });
+  assert.deepStrictEqual(seen, [1, 2, 3, 4]);
+});
+
+testAsync('starts are staggered, so N browsers do not open the funnel on one tick', async () => {
+  const startedAt = [];
+  const t0 = Date.now();
+  await pool.runPool({
+    items: [0, 1, 2],
+    concurrency: 3,
+    staggerMs: 40,
+    run: async () => { startedAt.push(Date.now() - t0); },
+  });
+  assert.strictEqual(startedAt.length, 3);
+  // Three starts 40ms apart puts the last at ~80ms. Compared against a floor
+  // rather than an exact value: a timer only ever promises "not before".
+  assert.ok(startedAt[2] >= 70, 'third start was at ' + startedAt[2] + 'ms');
+});
+
+// ---------------------------------------------------------------------------
+// Drain the queued async cases, then report. Everything above this line has
+// already run synchronously, exactly as it did before the queue existed.
+(async () => {
+  for (const { name, fn } of asyncTests) {
+    try {
+      await fn();
+      passed += 1;
+      console.log('  ok  ' + name);
+    } catch (error) {
+      failures.push({ name, error });
+      console.log('  FAIL ' + name + ': ' + error.message);
+    }
+  }
+
+  console.log('');
+  console.log(passed + ' passed, ' + failures.length + ' failed');
+  if (failures.length) {
+    for (const f of failures) console.error('\n' + f.name + '\n' + f.error.stack);
+    process.exitCode = 1;
+  }
+})();

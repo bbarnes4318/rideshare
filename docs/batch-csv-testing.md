@@ -178,6 +178,7 @@ node scripts/batchCsvRunner.js --test-mode --input test/fixtures/sample-leads.cs
 | `--output <file>` | final CSV (default `<report-dir>/leads-<batchId>.csv`) |
 | `--report-dir <path>` | forensic output (default `test-reports/`) |
 | `--cohort <name>` | `short`, `medium`, `long` or `mixed` (default `mixed`, rotating) |
+| `--concurrency <n>` | rows to run at once, 1-8 (default 3, or `BATCH_CONCURRENCY`) |
 | `--limit <n>` | process only the first n rows |
 | `--seed <n>` | reproduce a batch exactly |
 | `--telemetry-keys` | `redacted` (default) or `raw` |
@@ -189,9 +190,35 @@ node scripts/batchCsvRunner.js --test-mode --input test/fixtures/sample-leads.cs
 `--dry-run` and `--help` do not require `playwright-core`, so the pipeline can be
 inspected on a machine with no browser installed.
 
-Runs are **sequential**: one browser at a time, fully closed before the next,
-each with its own IPRoyal sticky session. No cookies, storage or proxy peer is
-shared between rows.
+## Concurrency
+
+Rows run **several at a time** - three by default, `--concurrency n` to change
+it. A row takes 30-60 seconds whatever else is happening, so a 383-row batch
+that took about five hours one-at-a-time takes closer to a hundred minutes at
+three, and under an hour at five.
+
+Nothing about an individual row changes. Each still gets its own browser
+process, its own IPRoyal sticky session and its own certificate, and still
+closes fully when it is done; no cookies, storage or proxy peer is shared
+between rows, concurrent or not. That isolation is exactly what makes them safe
+to overlap.
+
+What the ceiling is really about is memory: a concurrent row is a full Chromium
+process, so budget ~600MB each and leave the host its own headroom. On the
+8GB/4-vCPU server the harness runs on, 3-4 is comfortable and the dashboard will
+not offer more than `BATCH_MAX_CONCURRENCY` (4 unless an operator raises it).
+Past that the host starts swapping, which stretches the very session durations
+the experiment exists to measure.
+
+Two details worth knowing:
+
+- **Starts are staggered** by `BEHAVIOR_BETWEEN_RUNS_MS` (3s by default), so N
+  browsers never open the funnel on the same tick.
+- **Order is preserved.** Rows finish out of order - a `long` cohort row takes
+  three minutes while two `short` ones come and go - but the business CSV, the
+  forensic record and the progress table are all written in input order, so a
+  batch reads the same as its input file however it was scheduled. A seeded
+  batch (`--seed`) also reproduces identically at any concurrency.
 
 ## Output
 

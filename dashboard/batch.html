@@ -128,8 +128,9 @@
     <div id="confirmPending" class="note warn">Upload a CSV above first. This step &mdash; including
       the submit button below &mdash; unlocks once the preview succeeds.</div>
     <p class="sub">This submits to the live funnel and produces a real TrustedForm certificate
-       per accepted row. Runs are sequential; expect roughly 30&ndash;60 seconds per row &mdash; a
-       few hundred rows is a matter of hours. The CSV is written as the run goes, so you can
+       per accepted row. A row takes roughly 30&ndash;60 seconds, but rows run in parallel, so
+       the batch takes about that divided by the number below &mdash; <span id="etaNote"></span>
+       The CSV is written as the run goes, so you can
        download what has completed at any point, and closing this page does not stop the run.</p>
     <div class="row" style="margin-bottom:14px">
       <label>Cohort
@@ -140,7 +141,13 @@
           <option value="long">long</option>
         </select>
       </label>
+      <label>Rows at once
+        <select id="concurrency"></select>
+      </label>
     </div>
+    <p class="sub" style="margin-top:-6px">Each row is its own browser, its own residential IP and
+       its own certificate, so running them together changes nothing about any single one. The
+       ceiling is this server's memory, not the funnel.</p>
     <div id="ackWrap" class="hidden" style="margin-bottom:14px">
       <label class="check">
         <input type="checkbox" id="ack">
@@ -179,6 +186,13 @@
   var token = localStorage.getItem('token') || localStorage.getItem('authToken');
   var batchId = null;
   var poll = null;
+  // Row count of the current preview, so the confirm step can put a real number
+  // on what the chosen concurrency buys.
+  var previewRowCount = 0;
+
+  // Populated with the built-in defaults straight away, then reconciled with the
+  // server's own ceiling when the listing lands (and left alone if it doesn't).
+  setConcurrencyOptions();
 
   if (!token) document.getElementById('authWarn').classList.remove('hidden');
   else loadRecent();
@@ -242,6 +256,7 @@
       });
 
       if (batches.length) show('recentCard');
+      setConcurrencyOptions(data.maxConcurrency, data.defaultConcurrency);
 
       // Reattach to whatever is still going. activeBatchId is in-memory on the
       // server, so it is empty after a restart; the phase on disk is the more
@@ -264,6 +279,40 @@
       }
       return data;
     }).catch(function () { /* the listing is a convenience; never block the page */ });
+  }
+
+  // Built from the server's own limits rather than hard-coded here, so raising
+  // BATCH_MAX_CONCURRENCY on a bigger host is all it takes to offer more. Built
+  // once with the defaults at load, then rebuilt if the server's ceiling turns
+  // out to differ - the listing call is allowed to fail without breaking this.
+  var concurrencyMax = 0;
+  function setConcurrencyOptions(max, dflt) {
+    max = Number(max) || 4;
+    dflt = Number(dflt) || Math.min(3, max);
+    if (max === concurrencyMax) return;
+    var sel = document.getElementById('concurrency');
+    var chosen = Math.min(Number(sel.value) || dflt, max);
+    var html = '';
+    for (var n = 1; n <= max; n += 1) {
+      html += '<option value="' + n + '"' + (n === chosen ? ' selected' : '') + '>'
+        + n + (n === 1 ? ' (one at a time)' : '') + '</option>';
+    }
+    sel.innerHTML = html;
+    sel.onchange = updateEta;
+    concurrencyMax = max;
+    updateEta();
+  }
+
+  function updateEta() {
+    var n = Number(document.getElementById('concurrency').value) || 1;
+    var rows = previewRowCount;
+    var note = document.getElementById('etaNote');
+    if (!rows) { note.textContent = ''; return; }
+    // 45s is the midpoint of the per-row range; the stagger between starts is
+    // noise next to it. Deliberately a range, not a promise.
+    var mins = Math.round((rows * 45) / n / 60);
+    note.textContent = 'roughly ' + (mins < 1 ? 'under a minute' : mins + ' min')
+      + ' for ' + rows + ' row' + (rows === 1 ? '' : 's') + ' at this setting.';
   }
 
   function fmtTime(iso) {
@@ -317,6 +366,8 @@
   };
 
   function renderPreview(data) {
+    previewRowCount = data.usable || 0;
+    updateEta();
     batchId = data.batchId;
     document.getElementById('uploadMsg').textContent = '';
     document.getElementById('previewSummary').textContent =
@@ -394,6 +445,7 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         cohort: document.getElementById('cohort').value,
+        concurrency: Number(document.getElementById('concurrency').value) || undefined,
         allowNonTestRecords: needsAck && acked,
       }),
     }).then(function () {
@@ -421,7 +473,9 @@
       document.getElementById('progressSummary').textContent =
         p.phase + ' — ' + done + '/' + total + ' processed, ' + (p.submitted || 0)
         + ' accepted, ' + (p.certificates || 0) + ' certificate(s)'
-        + (p.current && p.phase === 'running' ? ' — current: ' + p.current : '');
+        + (p.concurrency > 1 ? ', ' + p.concurrency + ' at a time' : '')
+        // With a pool this is every row in flight, not one row.
+        + (p.current && p.phase === 'running' ? ' — in flight: ' + p.current : '');
 
       var tb = document.querySelector('#progressTable tbody');
       tb.innerHTML = (p.rows || []).map(function (r) {

@@ -84,17 +84,20 @@ function buildProxyPassword(basePassword, location, session, tier = TARGETING_TI
   return tokens.join('_');
 }
 
-async function selectResidentialSession({ host, port, username, basePassword, location }) {
+// `log` is injected rather than assumed: batch rows now run several at a time,
+// and every line below belongs to one specific row. The caller passes a logger
+// that prefixes it with that row's number; alone on a terminal it is console.log.
+async function selectResidentialSession({ host, port, username, basePassword, location, log = console.log }) {
   let fallback = null;
   for (const tier of TARGETING_TIERS) {
-    console.log('  targeting: ' + tier.name);
+    log('  targeting: ' + tier.name);
     let anyEgress = false;
     for (let attempt = 1; attempt <= SESSION_ATTEMPTS; attempt += 1) {
       const session = 'nlc' + Math.random().toString(36).slice(2, 10);
       const password = buildProxyPassword(basePassword, location, session, tier);
       const result = await fetchThroughProxy({ host, port, username, password, url: SESSION_PROBE_URL });
       if (!result.ok || !/^\d{1,3}(\.\d{1,3}){3}$/.test(result.body)) {
-        console.log('    probe ' + attempt + '/' + SESSION_ATTEMPTS + ': no usable egress ('
+        log('    probe ' + attempt + '/' + SESSION_ATTEMPTS + ': no usable egress ('
           + (result.error || 'HTTP ' + result.statusCode) + ')');
         continue;
       }
@@ -103,10 +106,10 @@ async function selectResidentialSession({ host, port, username, basePassword, lo
       const geo = await lookupIpGeo(ip);
       const cityMatch = geo && normalizeProxyToken(geo.city) === normalizeProxyToken(location.city);
       const stateMatch = geo && normalizeProxyToken(geo.regionName) === normalizeProxyToken(location.stateName);
-      console.log('    probe ' + attempt + '/' + SESSION_ATTEMPTS + ': ' + ip + ' -> '
+      log('    probe ' + attempt + '/' + SESSION_ATTEMPTS + ': ' + ip + ' -> '
         + (geo ? geo.city + ', ' + geo.regionName : 'unknown location'));
       if (cityMatch && stateMatch) {
-        console.log('  matched ' + location.city + ', ' + location.state + ' via ' + tier.name);
+        log('  matched ' + location.city + ', ' + location.state + ' via ' + tier.name);
         return { session, password, ip, geo, match: 'city + state matched', tier: tier.name };
       }
       if (stateMatch && (!fallback || fallback.match !== 'state matched, city did not')) {
@@ -115,11 +118,11 @@ async function selectResidentialSession({ host, port, username, basePassword, lo
         fallback = { session, password, ip, geo, match: 'NOT matched - wider pool', tier: tier.name };
       }
     }
-    if (!anyEgress) { console.log('  no peers for ' + tier.name + '; widening'); continue; }
+    if (!anyEgress) { log('  no peers for ' + tier.name + '; widening'); continue; }
     if (fallback && fallback.match === 'state matched, city did not') break;
   }
   if (!fallback) throw new Error('No usable IPRoyal residential session for ' + location.city + ', ' + location.state);
-  console.log('  no exact city match; using best available (' + fallback.match + ')');
+  log('  no exact city match; using best available (' + fallback.match + ')');
   return fallback;
 }
 

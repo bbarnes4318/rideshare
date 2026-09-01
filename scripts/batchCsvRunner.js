@@ -41,6 +41,7 @@ const path = require('path');
 
 const core = require('./lib/funnelCore');
 const leadCsv = require('./lib/leadCsv');
+const pool = require('./lib/pool');
 const qualification = require('./lib/qualification');
 const reporting = require('./lib/reporting');
 
@@ -52,8 +53,11 @@ const loadRunner = () => (runner || (runner = require('./behavioralTestRunner'))
 
 const { arg, hasFlag, required } = core;
 
+// With rows running one at a time this was the gap between them; with a pool it
+// is the minimum gap between two STARTS, which is the same spacing seen from
+// the funnel's side and stops N browsers opening it on the same tick.
 const BETWEEN_RUNS_MS = Number(process.env.BEHAVIOR_BETWEEN_RUNS_MS || 3000);
-const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms)));
+const DEFAULT_CONCURRENCY = pool.clampConcurrency(process.env.BATCH_CONCURRENCY, { fallback: 3 });
 
 function usage() {
   return [
@@ -72,6 +76,12 @@ function usage() {
     '  --output <file>            Final CSV (default: <report-dir>/leads-<batchId>.csv)',
     '  --report-dir <path>        Forensic output (default: test-reports/)',
     '  --cohort <name>            short | medium | long | mixed   (default: mixed)',
+    '  --concurrency <n>          Rows to run at once, 1-' + pool.MAX_CONCURRENCY
+      + ' (default: ' + DEFAULT_CONCURRENCY + ').',
+    '                             Each row is a separate browser, proxy session and',
+    '                             certificate, so they overlap without interfering;',
+    '                             n is bounded by RAM, not by the funnel. Budget',
+    '                             ~600MB per concurrent row.',
     '  --limit <n>                Only process the first n rows',
     '  --seed <n>                 Seed the qualification generator for reproducibility',
     '  --telemetry-keys <mode>    redacted (default) | raw',
@@ -125,6 +135,11 @@ async function main() {
   if (!['short', 'medium', 'long', 'mixed'].includes(cohortMode)) {
     throw new Error('--cohort must be short, medium, long or mixed');
   }
+  const concurrencyArg = arg('concurrency', null);
+  if (concurrencyArg !== null && !(Number(concurrencyArg) >= 1)) {
+    throw new Error('--concurrency must be a positive integer (1-' + pool.MAX_CONCURRENCY + ')');
+  }
+  const concurrency = pool.clampConcurrency(concurrencyArg, { fallback: DEFAULT_CONCURRENCY });
   const telemetryKeys = String(arg('telemetry-keys', 'redacted')).toLowerCase();
   if (!['redacted', 'raw'].includes(telemetryKeys)) {
     throw new Error('--telemetry-keys must be "redacted" or "raw"');
@@ -173,6 +188,8 @@ async function main() {
   console.log('rows:         ' + rows.length + ' usable, ' + errors.length + ' rejected'
     + (limit ? ', processing first ' + selected.length : ''));
   console.log('cohort:       ' + cohortMode);
+  console.log('concurrency:  ' + concurrency + (concurrency === 1 ? '  (one row at a time)'
+    : '  (' + concurrency + ' rows in flight, each its own browser and proxy session)'));
   console.log('entry mode:   ' + entryMode + (entryMode === 'type' ? '  (real key events)' : '  (value assignment)'));
   console.log('seed:         ' + seed);
   console.log('report dir:   ' + reportDir);
@@ -189,7 +206,7 @@ async function main() {
   if (!selected.length) throw new Error('No usable rows in ' + inputPath);
   writeProgress(progressPath, {
     batchId, phase: 'starting', total: selected.length, completed: 0,
-    submitted: 0, certificates: 0, rejectedAtInput: errors.length, rows: [],
+    submitted: 0, certificates: 0, rejectedAtInput: errors.length, concurrency, rows: [],
   });
 
   // ---- test-record gate ----------------------------------------------------
@@ -254,6 +271,17 @@ async function main() {
 
   // ---- credentials + proxy preflight, once ---------------------------------
   const behavioral = loadRunner();
+
+  // Draw every row's duration target here, in input order, rather than as each
+  // row starts. With rows overlapping, "as each row starts" is whatever order
+  // the pool happens to schedule them in, and the same --seed would stop
+  // reproducing the same batch. Done up front it still does.
+  for (const p of prepared) {
+    const [lo, hi] = behavioral.COHORT_RANGES[p.cohort];
+    p.targetDurationSec = Math.round((lo + rng() * (hi - lo)) * 10) / 10;
+    p.runId = batchId + '-row' + String(p.row.lineNumber).padStart(3, '0') + '-' + p.cohort;
+  }
+
   let credentials = { username: null, basePassword: null };
   if (offline) {
     console.log('--offline-selftest: loopback mock funnel, no proxy, nothing submitted anywhere.');
@@ -273,62 +301,124 @@ async function main() {
     console.log('');
   }
 
-  // ---- run every record sequentially ---------------------------------------
-  const records = [];
-  const outputRows = [];
-  const omitted = [];
+  // ---- run the records, `concurrency` at a time ----------------------------
+  //
+  // Rows never depended on one another: each launches its own browser process,
+  // selects its own residential session, and produces its own certificate. The
+  // only thing that made a batch take the sum of every row's session was the
+  // loop that ran them. They overlap now, and everything downstream still works
+  // in input order, so the CSV and the forensic record read exactly as before.
+  const slots = new Array(prepared.length).fill(null);  // one per input row, input order
+  const inFlight = new Map();                           // index -> name, for the progress file
 
-  // Resolved before the loop, not after it. A 383-row batch runs for hours,
-  // and holding every accepted row in memory until the end meant an
+  // Resolved before the run, not after it. A 383-row batch runs for a long
+  // time, and holding every accepted row in memory until the end meant an
   // interrupted run - or simply one still in progress - had no CSV at all,
-  // even though most of the work was done. The file is rewritten after each
-  // accepted row instead, so whatever has completed is always downloadable.
+  // even though most of the work was done. The file is rewritten as rows land
+  // instead, so whatever has completed is always downloadable.
   const outputPath = path.resolve(arg('output', path.join(reportDir, 'leads-' + batchId + '.csv')));
 
-  for (let i = 0; i < prepared.length; i += 1) {
-    const { row, quals, cohort, answers } = prepared[i];
-    const [lo, hi] = behavioral.COHORT_RANGES[cohort];
-    const targetDurationSec = Math.round((lo + rng() * (hi - lo)) * 10) / 10;
-    const runId = batchId + '-row' + String(row.lineNumber).padStart(3, '0') + '-' + cohort;
+  // Ordered views over whatever has finished so far. Rebuilt on demand rather
+  // than appended to: rows now finish out of order, and both the CSV and the
+  // forensic record are specified to be in input order.
+  const settled = () => slots.filter(Boolean);
+  const acceptedRows = () => settled().filter((s) => s.outputRow).map((s) => s.outputRow);
 
-    console.log('[' + (i + 1) + '/' + prepared.length + '] ' + runId
-      + '  ' + row.firstName + ' ' + row.lastName + '  ' + row.zip
+  /**
+   * Rewrite the CSV and the progress file from what has completed.
+   *
+   * Called after every row, accepted or not. Rewriting rather than appending
+   * costs nothing next to the 30-60s a row takes, and it is what lets a batch
+   * be read while it is still running - including one whose rows are landing
+   * out of order.
+   */
+  function publish(phase) {
+    const done = settled();
+    leadCsv.writeOutputCsv(outputPath, acceptedRows());
+    writeProgress(progressPath, {
+      batchId,
+      phase,
+      total: prepared.length,
+      completed: done.length,
+      submitted: done.filter((s) => s.outputRow).length,
+      certificates: done.filter((s) => s.record.trustedForm && s.record.trustedForm.certificateUrl).length,
+      rejectedAtInput: errors.length,
+      concurrency,
+      // There is no single current row any more; name every one in flight.
+      current: [...inFlight.values()].join(', ') || null,
+      rows: done.map((s) => ({
+        name: s.record.sourceRow
+          ? s.record.sourceRow.firstName + ' ' + s.record.sourceRow.lastName : '?',
+        zip: s.record.sourceRow ? s.record.sourceRow.zip : null,
+        cohort: s.record.cohort,
+        success: !!(s.record.submission && s.record.submission.success),
+        certificateId: (s.record.trustedForm && s.record.trustedForm.certificateId) || null,
+        ip: (s.record.proxy && s.record.proxy.ip) || null,
+        durationSec: s.record.actualDurationSec === undefined ? null : s.record.actualDurationSec,
+        error: s.record.error || null,
+      })),
+    });
+  }
+
+  /**
+   * One row, start to finish. Never throws: a row that fails is a recorded
+   * outcome, not an event that should take the rest of the batch with it.
+   *
+   * Every line it prints carries the row's own prefix, because with a pool the
+   * log is interleaved and an unattributed "run failed" belongs to nobody.
+   */
+  async function runRow(prep, i) {
+    const { row, quals, cohort, answers, targetDurationSec, runId } = prep;
+    const prefix = '[' + (i + 1) + '/' + prepared.length + '] ';
+    const name = row.firstName + ' ' + row.lastName;
+    inFlight.set(i, name);
+
+    console.log(prefix + runId + '  ' + name + '  ' + row.zip
       + '  ' + cohort + ' target ' + targetDurationSec + 's');
 
+    let record = null;
+
     // ZIP drives the residential proxy location, exactly as the proven runner does.
-    let location;
+    let location = null;
     try {
       location = core.getZipTarget(row.zip);
     } catch (error) {
-      console.log('    SKIPPED: ' + error.message);
-      records.push({ runId, error: error.message, sourceRow: row, qualification: quals });
-      continue;
+      console.log(prefix + '    SKIPPED: ' + error.message);
+      record = {
+        runId, cohort, error: error.message,
+        submission: { success: false }, trustedForm: {}, proxy: {},
+      };
     }
 
-    const dobParts = row.dob.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    const lead = {
-      zip: location.zip,
-      birthMonth: Number(dobParts[1]),
-      birthDay: dobParts[2],
-      birthYear: dobParts[3],
-      height: quals.heightInches,
-      weight: Number(quals.weightLbs),
-      address: row.address,
-      fname: row.firstName,
-      lname: row.lastName,
-      email: row.email,
-      phone: row.phone,
-    };
+    if (location) {
+      const dobParts = row.dob.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      const lead = {
+        zip: location.zip,
+        birthMonth: Number(dobParts[1]),
+        birthDay: dobParts[2],
+        birthYear: dobParts[3],
+        height: quals.heightInches,
+        weight: Number(quals.weightLbs),
+        address: row.address,
+        fname: row.firstName,
+        lname: row.lastName,
+        email: row.email,
+        phone: row.phone,
+      };
 
-    let record;
-    try {
-      record = await behavioral.runOnce({
-        runId, cohort, index: i + 1, lead, location, credentials, targetDurationSec,
-        reportDir, batchId, offline, telemetryKeys, entryMode, answers, targetWpm,
-      });
-    } catch (error) {
-      console.log('    ERROR: ' + error.message);
-      record = { runId, cohort, error: error.message, submission: { success: false }, trustedForm: {}, proxy: {} };
+      try {
+        record = await behavioral.runOnce({
+          runId, cohort, index: i + 1, lead, location, credentials, targetDurationSec,
+          reportDir, batchId, offline, telemetryKeys, entryMode, answers, targetWpm,
+          logPrefix: prefix,
+        });
+      } catch (error) {
+        console.log(prefix + '    ERROR: ' + error.message);
+        record = {
+          runId, cohort, error: error.message,
+          submission: { success: false }, trustedForm: {}, proxy: {},
+        };
+      }
     }
 
     // Attach the experiment's inputs to the forensic record.
@@ -344,80 +434,63 @@ async function main() {
     record.qualificationAnswers = answers;
     record.qualificationNote = 'Generated experimental input variables. '
       + 'They are not assertions about a real person.';
-    records.push(record);
 
     const cert = record.trustedForm && record.trustedForm.certificateUrl;
     const observedIp = record.proxy && record.proxy.ip;
-    console.log('    ip ' + (observedIp || 'none')
+    const accepted = !!(record.submission && record.submission.success);
+
+    console.log(prefix + '    ip ' + (observedIp || 'none')
       + '  cert ' + (record.trustedForm && record.trustedForm.certificateId || 'none')
       + '  actual ' + (record.actualDurationSec === undefined ? '?' : record.actualDurationSec) + 's'
       + '  weight ' + (record.weightSubmitted === undefined ? 'not set' : record.weightSubmitted)
-      + '  success ' + !!(record.submission && record.submission.success));
+      + '  success ' + accepted);
 
     // Only a submission the funnel actually accepted belongs in the business
     // CSV. TrustedForm issues a certificate on page load, so a rejected row
     // still has one; writing it here would make a lead that does not exist
     // indistinguishable from one that does. Rejected rows stay in the forensic
     // record, which says exactly what happened.
-    if (!(record.submission && record.submission.success)) {
-      omitted.push({
+    slots[i] = {
+      record,
+      outputRow: accepted ? {
+        firstName: row.firstName,
+        lastName: row.lastName,
+        phone: row.phone,
+        email: row.email,
+        address: row.address,
+        city: row.city,
+        state: row.state,
+        zipCode: row.zip,
+        birthdate: row.dob,
+        gender: row.gender,
+        // Observed, never fabricated. Empty when the run did not produce one.
+        ipAddress: observedIp || '',
+        trustedFormURL: cert || '',
+        datePosted: leadCsv.datePosted(),
+      } : null,
+      omitted: accepted ? null : {
         line: row.lineNumber,
-        name: row.firstName + ' ' + row.lastName,
+        name,
         reason: (record.error || (record.submission && record.submission.response) || 'submission not accepted')
           .toString().slice(0, 120),
         certificateStillIssued: !!cert,
-      });
-      console.log('');
-      if (i < prepared.length - 1 && BETWEEN_RUNS_MS > 0) await sleep(BETWEEN_RUNS_MS);
-      continue;
-    }
-
-    outputRows.push({
-      firstName: row.firstName,
-      lastName: row.lastName,
-      phone: row.phone,
-      email: row.email,
-      address: row.address,
-      city: row.city,
-      state: row.state,
-      zipCode: row.zip,
-      birthdate: row.dob,
-      gender: row.gender,
-      // Observed, never fabricated. Empty when the run did not produce one.
-      ipAddress: observedIp || '',
-      trustedFormURL: cert || '',
-      datePosted: leadCsv.datePosted(),
-    });
-
-    // Rewrite rather than append: writeOutputCsv owns the header and the
-    // column order, and rewriting a few hundred rows costs nothing next to
-    // the 30-60s each row already takes.
-    leadCsv.writeOutputCsv(outputPath, outputRows);
-
-    writeProgress(progressPath, {
-      batchId,
-      phase: 'running',
-      total: prepared.length,
-      completed: i + 1,
-      submitted: outputRows.length,
-      certificates: records.filter((r) => r.trustedForm && r.trustedForm.certificateUrl).length,
-      rejectedAtInput: errors.length,
-      current: row.firstName + ' ' + row.lastName,
-      rows: records.map((r) => ({
-        name: r.sourceRow ? r.sourceRow.firstName + ' ' + r.sourceRow.lastName : '?',
-        zip: r.sourceRow ? r.sourceRow.zip : null,
-        cohort: r.cohort,
-        success: !!(r.submission && r.submission.success),
-        certificateId: (r.trustedForm && r.trustedForm.certificateId) || null,
-        ip: (r.proxy && r.proxy.ip) || null,
-        durationSec: r.actualDurationSec === undefined ? null : r.actualDurationSec,
-        error: r.error || null,
-      })),
-    });
-
-    console.log('');
-    if (i < prepared.length - 1 && BETWEEN_RUNS_MS > 0) await sleep(BETWEEN_RUNS_MS);
+      },
+    };
+    inFlight.delete(i);
+    return record;
   }
+
+  await pool.runPool({
+    items: prepared,
+    concurrency,
+    staggerMs: BETWEEN_RUNS_MS,
+    run: runRow,
+    onSettled: () => publish('running'),
+  });
+
+  const records = settled().map((s) => s.record);
+  const outputRows = acceptedRows();
+  const omitted = settled().map((s) => s.omitted).filter(Boolean);
 
   // ---- outputs -------------------------------------------------------------
   // The file has been kept current throughout the loop; this is the final flush,
@@ -465,6 +538,7 @@ async function main() {
     submitted,
     certificates: certs,
     rejectedAtInput: errors.length,
+    concurrency,
     omitted,
     outputCsv: outputPath,
     batchJson: jsonPath,
