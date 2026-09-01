@@ -152,8 +152,10 @@ class RideshareDashboard {
       this.createCharts(response);
       this.updateLastUpdated();
     } catch (error) {
+      // Say what actually broke. The generic message hid the real exception,
+      // and because the auto-refresh repeats every 30s it hid it repeatedly.
       console.error("Error loading dashboard data:", error);
-      this.showError("Failed to load dashboard data");
+      this.showError("Dashboard data failed: " + (error && error.message ? error.message : error));
     } finally {
       this.hideLoading();
     }
@@ -171,17 +173,31 @@ class RideshareDashboard {
   }
 
   createCharts(data) {
-    // Submissions Over Time Chart
-    this.createSubmissionsChart(data.analytics.dailySubmissions);
-
-    // Device Distribution Chart
-    this.createDeviceChart(data.analytics.byDevice);
-
-    // Location Chart
-    this.createLocationChart(data.additional.topLocations);
-
-    // Status Chart
-    this.createStatusChart(data.analytics.byStatus);
+    // Charts are decorative. They come from a CDN, and if that is blocked or a
+    // single chart config throws, the metrics and tables are still perfectly
+    // good - so a chart failure is reported once and does not take down the
+    // whole dashboard load.
+    if (typeof Chart === "undefined") {
+      this.showError("Charts unavailable: the Chart.js CDN did not load. Metrics still work.");
+      return;
+    }
+    const safely = (name, fn, arg) => {
+      try {
+        fn.call(this, arg);
+      } catch (error) {
+        console.error("Chart failed: " + name, error);
+        this.chartErrors = (this.chartErrors || []).concat(name);
+      }
+    };
+    this.chartErrors = [];
+    safely("submissions", this.createSubmissionsChart, data.analytics.dailySubmissions);
+    safely("device", this.createDeviceChart, data.analytics.byDevice);
+    safely("location", this.createLocationChart, data.additional.topLocations);
+    safely("status", this.createStatusChart, data.analytics.byStatus);
+    if (this.chartErrors.length) {
+      this.showError("Some charts failed to render: " + this.chartErrors.join(", ")
+        + ". The figures above are unaffected.");
+    }
   }
 
   createSubmissionsChart(dailyData) {
@@ -719,11 +735,17 @@ class RideshareDashboard {
 
     if (!response.ok) {
       if (response.status === 401) {
+        // Returning undefined here left the caller to dereference a missing
+        // response and report "Failed to load dashboard data" every 30s, with
+        // no way out and no hint that the session had simply expired.
         localStorage.removeItem("token");
         localStorage.removeItem("user");
-        return;
+        window.location.href = "/admin?logout=true";
+        throw new Error("Your session expired. Redirecting to sign in.");
       }
-      throw new Error(`API call failed: ${response.statusText}`);
+      throw new Error(
+        `API call failed: ${response.status} ${response.statusText} (${endpoint})`
+      );
     }
 
     return await response.json();
