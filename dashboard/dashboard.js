@@ -62,6 +62,12 @@ class RideshareDashboard {
       this.loadDashboardData();
     });
 
+    // Error banner dismiss
+    const errorDismiss = document.getElementById("errorBannerDismiss");
+    if (errorDismiss) {
+      errorDismiss.addEventListener("click", () => this.clearError());
+    }
+
     // Dark mode toggle
     document.getElementById("darkModeToggle").addEventListener("click", () => {
       this.toggleDarkMode();
@@ -151,6 +157,9 @@ class RideshareDashboard {
       const response = await this.apiCall("/api/analytics/dashboard");
       this.dashboardData = response;
 
+      // Drop any banner from a previous failed refresh before this pass runs;
+      // updateMetrics/createCharts re-raise it if they still have a complaint.
+      this.clearError();
       this.updateMetrics(response.totals);
       this.createCharts(response);
       this.updateLastUpdated();
@@ -165,14 +174,24 @@ class RideshareDashboard {
   }
 
   updateMetrics(totals) {
-    document.getElementById("periodSubmissions").textContent =
-      totals.period.toLocaleString();
-    document.getElementById("todaySubmissions").textContent =
-      totals.today.toLocaleString();
+    // A partial payload must not take the page down. Anything the API omits
+    // shows as "--" rather than throwing on .toLocaleString() of undefined,
+    // which used to abort the whole load before the charts were even built.
+    const t = totals || {};
+    const num = (v) => (typeof v === "number" && isFinite(v) ? v.toLocaleString() : "--");
+
+    document.getElementById("periodSubmissions").textContent = num(t.period);
+    document.getElementById("todaySubmissions").textContent = num(t.today);
     document.getElementById("qualityRate").textContent =
-      `${totals.qualityRate}%`;
-    document.getElementById("totalSubmissions").textContent =
-      totals.allTime.toLocaleString();
+      typeof t.qualityRate === "number" && isFinite(t.qualityRate)
+        ? `${t.qualityRate}%`
+        : "--";
+    document.getElementById("totalSubmissions").textContent = num(t.allTime);
+
+    if (!totals) {
+      this.showError("The server returned no totals for this period. "
+        + "The metric tiles above show -- until the next refresh succeeds.");
+    }
   }
 
   createCharts(data) {
@@ -185,19 +204,23 @@ class RideshareDashboard {
         + "Metrics still work.");
       return;
     }
-    const safely = (name, fn, arg) => {
+    // Take a thunk, not a pre-computed argument. Passing
+    // `data.analytics.dailySubmissions` evaluated that property chain at the
+    // call site - outside the try - so a payload missing `analytics` threw
+    // straight past this guard and killed the whole load.
+    const safely = (name, fn, getArg) => {
       try {
-        fn.call(this, arg);
+        fn.call(this, getArg());
       } catch (error) {
         console.error("Chart failed: " + name, error);
         this.chartErrors = (this.chartErrors || []).concat(name);
       }
     };
     this.chartErrors = [];
-    safely("submissions", this.createSubmissionsChart, data.analytics.dailySubmissions);
-    safely("device", this.createDeviceChart, data.analytics.byDevice);
-    safely("location", this.createLocationChart, data.additional.topLocations);
-    safely("status", this.createStatusChart, data.analytics.byStatus);
+    safely("submissions", this.createSubmissionsChart, () => data.analytics.dailySubmissions);
+    safely("device", this.createDeviceChart, () => data.analytics.byDevice);
+    safely("location", this.createLocationChart, () => data.additional.topLocations);
+    safely("status", this.createStatusChart, () => data.analytics.byStatus);
     if (this.chartErrors.length) {
       this.showError("Some charts failed to render: " + this.chartErrors.join(", ")
         + ". The figures above are unaffected.");
@@ -800,7 +823,33 @@ class RideshareDashboard {
   }
 
   showError(message) {
-    alert("Error: " + message);
+    // Inline banner, not alert(): auto-refresh runs every 30s, so a persistent
+    // fault used to raise a modal dialog every 30 seconds indefinitely.
+    // Repeats of the message already on screen are dropped for the same reason.
+    const banner = document.getElementById("errorBanner");
+    const text = document.getElementById("errorBannerText");
+    if (!banner || !text) {
+      console.error("Error: " + message);
+      return;
+    }
+    // Accumulate rather than overwrite: one load can fail in two ways at once
+    // (no totals AND no chart data), and showing only the second reads as
+    // "the figures are fine" while the tiles sit at "--".
+    this.errorMessages = this.errorMessages || [];
+    if (this.errorMessages.includes(message)) {
+      return;
+    }
+    this.errorMessages.push(message);
+    text.textContent = this.errorMessages.join(" ");
+    banner.classList.remove("hidden");
+  }
+
+  clearError() {
+    const banner = document.getElementById("errorBanner");
+    if (banner) {
+      banner.classList.add("hidden");
+    }
+    this.errorMessages = [];
   }
 
   showSuccess(message) {

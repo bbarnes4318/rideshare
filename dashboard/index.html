@@ -105,6 +105,22 @@
         .chart-container:hover {
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
         }
+
+        /* Chart.js with maintainAspectRatio:false sizes the canvas from its
+           parent. Without a fixed height here the parent grows to fit the
+           canvas, which makes the canvas grow again on the next resize pass --
+           the page scrolls forever and the tab locks up. The wrapper pins the
+           height so that loop can never start. */
+        .chart-canvas {
+            position: relative;
+            height: 280px;
+            width: 100%;
+        }
+
+        .chart-canvas > canvas {
+            display: block;
+            max-height: 100%;
+        }
         
         /* ---- Submissions table: fits the viewport, never scrolls sideways ---- */
         .data-table {
@@ -531,6 +547,24 @@
             
             <!-- Content Area -->
             <main class="flex-1 overflow-y-auto p-6">
+                <!-- Non-blocking error banner. Replaces alert(): the dashboard
+                     auto-refreshes every 30s, so a persistent API fault used to
+                     mean a modal dialog every 30 seconds forever. -->
+                <div id="errorBanner" class="hidden mb-6 rounded-lg border border-red-300 bg-red-50 p-4">
+                    <div class="flex items-start justify-between gap-4">
+                        <div class="flex items-start gap-3">
+                            <svg class="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"></path>
+                            </svg>
+                            <p class="text-sm text-red-800" id="errorBannerText"></p>
+                        </div>
+                        <button type="button" id="errorBannerDismiss"
+                                class="text-red-600 hover:text-red-800 text-sm font-medium flex-shrink-0">
+                            Dismiss
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Dashboard Section -->
                 <div id="dashboard-section" class="section-content">
                     <!-- Metrics Cards -->
@@ -609,13 +643,17 @@
                         <!-- Submissions Over Time Chart -->
                         <div class="chart-container p-6">
                             <h3 class="text-lg font-semibold text-gray-900 mb-4">Submissions Over Time</h3>
-                            <canvas id="submissionsChart" width="400" height="200"></canvas>
+                            <div class="chart-canvas">
+                                <canvas id="submissionsChart"></canvas>
+                            </div>
                         </div>
                         
                         <!-- Device Distribution Chart -->
                         <div class="chart-container p-6">
                             <h3 class="text-lg font-semibold text-gray-900 mb-4">Device Distribution</h3>
-                            <canvas id="deviceChart" width="400" height="200"></canvas>
+                            <div class="chart-canvas">
+                                <canvas id="deviceChart"></canvas>
+                            </div>
                         </div>
                     </div>
                     
@@ -624,13 +662,17 @@
                         <!-- Top Locations -->
                         <div class="chart-container p-6">
                             <h3 class="text-lg font-semibold text-gray-900 mb-4">Top Locations</h3>
-                            <canvas id="locationChart" width="400" height="200"></canvas>
+                            <div class="chart-canvas">
+                                <canvas id="locationChart"></canvas>
+                            </div>
                         </div>
                         
                         <!-- Status Distribution -->
                         <div class="chart-container p-6">
                             <h3 class="text-lg font-semibold text-gray-900 mb-4">Status Distribution</h3>
-                            <canvas id="statusChart" width="400" height="200"></canvas>
+                            <div class="chart-canvas">
+                                <canvas id="statusChart"></canvas>
+                            </div>
                         </div>
                     </div>
                 </div>

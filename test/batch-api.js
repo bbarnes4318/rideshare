@@ -120,7 +120,23 @@ async function main() {
   await test('preview rejects a CSV with missing headers', async () => {
     const res = await request('POST', '/api/batch/preview', { filename: 'x.csv', content: 'a,b\n1,2\n' });
     assert.strictEqual(res.status, 400);
-    assert.ok(/missing required header/i.test(res.body.message), res.body.message);
+    assert.ok(/missing required column/i.test(res.body.message), res.body.message);
+    // The operator has to be able to fix the file from the message alone.
+    assert.ok(/birthdate/i.test(res.body.message), res.body.message);
+    assert.ok(/Found: a, b/.test(res.body.message), res.body.message);
+  });
+
+  await test('preview accepts the header spellings other exports use', async () => {
+    const aliased = 'first name,LAST NAME,sex,Age,Street Address,City,State,Zip Code,'
+      + 'Phone Number,Email Address,birthDate\n'
+      + 'Jane,TestLead,F,35,2 Oak Ave,Newark,NJ,07102,(551) 332-6221,'
+      + 'jane.testlead@example.com,1990-07-04\n';
+    const res = await request('POST', '/api/batch/preview', { filename: 'aliased.csv', content: aliased });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(res.body.usable, 1);
+    assert.strictEqual(res.body.rejected.length, 0);
+    assert.strictEqual(res.body.rows[0].dob, '07/04/1990');
+    assert.strictEqual(res.body.rows[0].phone, '5513326221');
   });
 
   await test('preview rejects an empty body', async () => {

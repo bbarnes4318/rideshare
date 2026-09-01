@@ -40,6 +40,23 @@ fi
 
 mkdir -p exports
 
+# The batch CSV harness stages uploads under test-reports/uploads. The behavioral
+# runners are driven from the CLI as root, so this tree ends up root-owned, while
+# the app serving /api/batch runs as ${APP_USER} - and an unwritable directory is
+# exactly what made the CSV preview fail with EACCES (surfacing as a bare 500).
+#
+# Neither step may abort the deploy: under `set -e` a chown this script is not
+# privileged to perform would take down a deployment that is otherwise fine. Warn
+# and continue; the preview route now reports the problem in plain terms anyway.
+BATCH_UPLOAD_DIR="test-reports/uploads"
+if ! mkdir -p "${BATCH_UPLOAD_DIR}" 2>/dev/null; then
+  echo "!! Could not create ${APP_DIR}/${BATCH_UPLOAD_DIR} as $(id -un)." >&2
+  echo "   Run as root: mkdir -p ${APP_DIR}/${BATCH_UPLOAD_DIR} && chown -R ${APP_USER:-rideshare} ${APP_DIR}/test-reports" >&2
+fi
+if [ "$(id -u)" = "0" ] && id -u "${APP_USER:-rideshare}" >/dev/null 2>&1; then
+  chown -R "${APP_USER:-rideshare}" test-reports exports     || echo "!! chown of test-reports/exports failed; the batch upload may not work." >&2
+fi
+
 if [ ! -f "${APP_DIR}/.env" ]; then
   echo "!! ${APP_DIR}/.env is missing. Create it before starting the app." >&2
   exit 1

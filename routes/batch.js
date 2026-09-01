@@ -51,6 +51,35 @@ function batchDir(batchId) {
   return dir;
 }
 
+// The app runs as its own service account (see deploy.sh) out of a directory
+// git-cloned by someone else, so the report/upload tree is the one thing most
+// likely to be unwritable in production. Left unguarded that surfaces as a bare
+// 500 - and the global handler in server.js hides `error` outside development,
+// so the operator sees "Internal server error" and nothing else. Name the path
+// and the errno instead.
+function ensureUploadDir() {
+  try {
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  } catch (error) {
+    const err = new Error(
+      'Cannot create the batch upload directory ' + UPLOAD_DIR + ' (' + error.code + '). '
+      + 'The server process must be able to write there. Either create it and give '
+      + "the app's user ownership, or point BEHAVIOR_REPORT_DIR at a writable directory.");
+    err.operational = true;
+    throw err;
+  }
+  try {
+    fs.accessSync(UPLOAD_DIR, fs.constants.W_OK);
+  } catch (error) {
+    const err = new Error(
+      'The batch upload directory ' + UPLOAD_DIR + ' is not writable by the server process '
+      + '(' + error.code + "). Give the app's user write access, or point "
+      + 'BEHAVIOR_REPORT_DIR at a writable directory.');
+    err.operational = true;
+    throw err;
+  }
+}
+
 function readJson(file, fallback = null) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
 }
@@ -77,9 +106,20 @@ router.post('/preview', authenticateToken, jsonBody, (req, res) => {
 
   const batchId = newBatchId();
   const dir = batchDir(batchId);
-  fs.mkdirSync(dir, { recursive: true });
   const inputPath = path.join(dir, 'input.csv');
-  fs.writeFileSync(inputPath, content);
+
+  try {
+    ensureUploadDir();
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(inputPath, content);
+  } catch (error) {
+    console.error('Batch preview: cannot stage the upload', error);
+    return res.status(500).json({
+      message: error.operational
+        ? error.message
+        : 'Could not save the uploaded CSV to ' + dir + ' (' + error.code + ').',
+    });
+  }
 
   let loaded;
   try {
@@ -125,11 +165,18 @@ router.post('/preview', authenticateToken, jsonBody, (req, res) => {
     };
   });
 
-  fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({
-    batchId, filename, seed, uploadedAt: new Date().toISOString(),
-    uploadedBy: (req.user && (req.user.email || req.user.username)) || null,
-    usable: loaded.rows.length, rejected: loaded.errors.length,
-  }, null, 2));
+  try {
+    fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({
+      batchId, filename, seed, uploadedAt: new Date().toISOString(),
+      uploadedBy: (req.user && (req.user.email || req.user.username)) || null,
+      usable: loaded.rows.length, rejected: loaded.errors.length,
+    }, null, 2));
+  } catch (error) {
+    console.error('Batch preview: cannot write meta.json', error);
+    return res.status(500).json({
+      message: 'Could not record the batch in ' + dir + ' (' + error.code + ').',
+    });
+  }
 
   res.json({
     batchId,
@@ -172,7 +219,17 @@ router.post('/:batchId/start', authenticateToken, jsonBody, (req, res) => {
 
   // Re-check the gate here rather than trusting the client: the preview is
   // advisory, this is the decision point.
-  const loaded = leadCsv.loadLeadCsv(inputPath);
+  let loaded;
+  try {
+    loaded = leadCsv.loadLeadCsv(inputPath);
+  } catch (error) {
+    // The CSV parsed at preview time, so this is the stored copy going missing
+    // or becoming unreadable - an operational fault, not bad input.
+    console.error('Batch start: cannot re-read ' + inputPath, error);
+    return res.status(500).json({
+      message: 'Could not re-read the uploaded CSV for this batch: ' + error.message,
+    });
+  }
   const nonTest = loaded.rows.filter((r) => !r.testRecord.isTest);
   if (nonTest.length && !allowNonTest) {
     return res.status(400).json({

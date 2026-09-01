@@ -15,6 +15,49 @@ const REQUIRED_HEADERS = [
   'City', 'State', 'Zip', 'Phone', 'Email', 'DOB',
 ];
 
+// Exports arrive from a spreadsheet, a CRM or a vendor, and each spells the same
+// column differently: First_Name / first name / FirstName, DOB / birthDate /
+// Date of Birth. Refusing those is a rename-the-columns chore that teaches the
+// operator nothing, so a header is matched on its letters and digits only (case,
+// spaces, underscores and dashes ignored) against the spellings below. The
+// canonical name stays what the docs and the sample CSV show.
+const HEADER_ALIASES = {
+  First_Name: ['firstname', 'fname', 'first', 'givenname'],
+  Last_Name: ['lastname', 'lname', 'last', 'surname', 'familyname'],
+  Gender: ['gender', 'sex'],
+  Age: ['age'],
+  Address: ['address', 'address1', 'addressline1', 'streetaddress', 'street'],
+  City: ['city', 'town'],
+  State: ['state', 'st', 'province'],
+  Zip: ['zip', 'zipcode', 'postalcode', 'postcode'],
+  Phone: ['phone', 'phonenumber', 'phone1', 'primaryphone', 'mobile', 'cell', 'cellphone'],
+  Email: ['email', 'emailaddress', 'email1'],
+  DOB: ['dob', 'birthdate', 'dateofbirth', 'birthday', 'birth'],
+};
+
+/** Reduce a header to its letters and digits, so spelling variants collapse. */
+function normalizeHeader(raw) {
+  return String(raw == null ? '' : raw).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Map each required column to the position it occupies in this file.
+ *
+ * Returns { index, missing }. A column matches on any of its accepted
+ * spellings; where a file repeats one, the leftmost occurrence wins.
+ */
+function resolveHeaders(headers) {
+  const seen = headers.map(normalizeHeader);
+  const index = {};
+  const missing = [];
+  for (const canonical of REQUIRED_HEADERS) {
+    const accepted = HEADER_ALIASES[canonical];
+    const at = seen.findIndex((h) => h && accepted.includes(h));
+    if (at === -1) missing.push(canonical); else index[canonical] = at;
+  }
+  return { index, missing };
+}
+
 // The final business output, exactly these headers in exactly this order.
 const OUTPUT_HEADERS = [
   'firstName', 'lastName', 'phone', 'email', 'address', 'city', 'state',
@@ -175,12 +218,14 @@ function loadLeadCsv(filePath) {
   if (!table.length) throw new Error('Input CSV is empty: ' + filePath);
 
   const headers = table[0].map((h) => String(h).trim());
-  const missing = REQUIRED_HEADERS.filter((h) => !headers.includes(h));
+  const { index, missing } = resolveHeaders(headers);
   if (missing.length) {
-    throw new Error('Input CSV is missing required header(s): ' + missing.join(', ')
-      + '\nFound: ' + headers.join(', '));
+    throw new Error('Input CSV is missing required column(s): '
+      + missing.map((h) => h + ' (accepted: ' + HEADER_ALIASES[h].join(', ') + ')').join('; ')
+      + '\nFound: ' + headers.join(', ')
+      + '\nColumns are matched on letters and digits only, so case, spaces, underscores '
+      + 'and dashes do not matter.');
   }
-  const index = Object.fromEntries(headers.map((h, i) => [h, i]));
   const cell = (r, h) => String(r[index[h]] == null ? '' : r[index[h]]).trim();
 
   const rows = [];
@@ -242,6 +287,9 @@ function writeOutputCsv(filePath, records) {
 
 module.exports = {
   REQUIRED_HEADERS,
+  HEADER_ALIASES,
+  normalizeHeader,
+  resolveHeaders,
   OUTPUT_HEADERS,
   parseCsv,
   normalizeDob,

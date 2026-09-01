@@ -301,6 +301,31 @@ test('datePosted is MM/DD/YYYY', () => {
   assert.strictEqual(leadCsv.datePosted(new Date(2026, 0, 5)), '01/05/2026');
 });
 
+test('header matching ignores case, spaces, underscores and dashes', () => {
+  const { index, missing } = leadCsv.resolveHeaders([
+    'first name', 'LAST-NAME', 'Sex', 'age', 'Street Address',
+    'city', 'State', 'Zip Code', 'Phone Number', 'Email Address', 'birthDate',
+  ]);
+  assert.deepStrictEqual(missing, []);
+  assert.strictEqual(index.First_Name, 0);
+  assert.strictEqual(index.Zip, 7);
+  assert.strictEqual(index.DOB, 10);
+});
+
+test('header matching reports the columns it could not find', () => {
+  const { missing } = leadCsv.resolveHeaders(['First_Name', 'Last_Name']);
+  assert.ok(missing.includes('DOB'));
+  assert.ok(!missing.includes('First_Name'));
+});
+
+test('a repeated column resolves to its leftmost occurrence', () => {
+  const { index } = leadCsv.resolveHeaders([
+    'Email', 'First_Name', 'Last_Name', 'Gender', 'Age', 'Address',
+    'City', 'State', 'Zip', 'Phone', 'email_address', 'DOB',
+  ]);
+  assert.strictEqual(index.Email, 0);
+});
+
 test('output CSV has the 13 specified headers in order', () => {
   assert.deepStrictEqual(leadCsv.OUTPUT_HEADERS, [
     'firstName', 'lastName', 'phone', 'email', 'address', 'city', 'state',

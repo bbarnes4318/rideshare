@@ -48,6 +48,9 @@
   label.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px;
     background: var(--warnbg); border: 1px solid #e5c76b; padding: 12px; border-radius: 8px; }
   .hidden { display: none; }
+  .card.pending { opacity: .55; }
+  .card.pending button, .card.pending select, .card.pending input { pointer-events: none; }
+  .note.pre { white-space: pre-line; }
   a { color: var(--accent); }
 </style>
 </head>
@@ -67,14 +70,19 @@
   <!-- 1. upload -->
   <div class="card">
     <h2>1. Upload CSV</h2>
-    <p class="sub">Headers, case-sensitive:
+    <p class="sub">Required columns:
       <code>First_Name, Last_Name, Gender, Age, Address, City, State, Zip, Phone, Email, DOB</code>.
-      Uploading only previews &mdash; nothing is submitted.</p>
+      Column names are matched on their letters and digits only, so case, spaces, underscores and
+      dashes do not matter and the usual variants are accepted: <code>birthDate</code>,
+      <code>Date of Birth</code> and <code>birthday</code> all satisfy <code>DOB</code>,
+      <code>first name</code> satisfies <code>First_Name</code>, <code>Zip Code</code> satisfies
+      <code>Zip</code>. Uploading only previews &mdash; nothing is submitted.</p>
     <div class="row">
       <input type="file" id="file" accept=".csv,text/csv">
-      <button id="uploadBtn">Preview</button>
+      <button id="uploadBtn">Upload &amp; preview</button>
       <span id="uploadMsg" class="sub" style="margin:0"></span>
     </div>
+    <div id="uploadError" style="margin-top:14px"></div>
   </div>
 
   <!-- 2. preview -->
@@ -100,8 +108,10 @@
   </div>
 
   <!-- 3. confirm -->
-  <div class="card hidden" id="confirmCard">
+  <div class="card pending" id="confirmCard">
     <h2>3. Confirm and run</h2>
+    <div id="confirmPending" class="note warn">Upload a CSV above first. This step &mdash; including
+      the submit button below &mdash; unlocks once the preview succeeds.</div>
     <p class="sub">This submits to the live funnel and produces a real TrustedForm certificate
        per accepted row. Runs are sequential; expect roughly 30&ndash;60 seconds per row.</p>
     <div class="row" style="margin-bottom:14px">
@@ -120,7 +130,7 @@
         <span id="ackText"></span>
       </label>
     </div>
-    <button id="startBtn">Start batch</button>
+    <button id="startBtn" disabled>Submit batch &mdash; runs against the live funnel</button>
     <span id="startMsg" class="sub" style="margin-left:10px"></span>
   </div>
 
@@ -170,6 +180,13 @@
     });
   }
   function show(id) { document.getElementById(id).classList.remove('hidden'); }
+  function lockConfirm() {
+    batchId = null;
+    document.getElementById('confirmCard').classList.add('pending');
+    show('confirmPending');
+    document.getElementById('startBtn').disabled = true;
+    hide('previewCard');
+  }
   function hide(id) { document.getElementById(id).classList.add('hidden'); }
   function esc(s) {
     return String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, function (c) {
@@ -182,6 +199,7 @@
     var f = document.getElementById('file').files[0];
     var msg = document.getElementById('uploadMsg');
     if (!f) { msg.textContent = 'Choose a .csv file first.'; return; }
+    document.getElementById('uploadError').innerHTML = '';
     msg.textContent = 'Reading…';
     var reader = new FileReader();
     reader.onload = function () {
@@ -189,7 +207,14 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filename: f.name, content: reader.result }),
-      }).then(renderPreview).catch(function (e) { msg.textContent = e.message; });
+      }).then(renderPreview).catch(function (e) {
+        msg.textContent = '';
+        // Header and parse failures are multi-line and name every accepted spelling,
+        // so they need more room than the one-line status span beside the button.
+        document.getElementById('uploadError').innerHTML =
+          '<div class="note bad pre">' + esc(e.message) + '</div>';
+        lockConfirm();
+      });
     };
     reader.readAsText(f);
   };
@@ -250,7 +275,10 @@
     }).join('');
 
     show('previewCard');
-    show('confirmCard');
+    document.getElementById('confirmCard').classList.remove('pending');
+    hide('confirmPending');
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('startMsg').textContent = '';
     hide('progressCard');
   }
 
