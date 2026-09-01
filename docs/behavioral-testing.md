@@ -282,6 +282,52 @@ no person produces, and TrustedForm reports it faithfully. Only the ~370 cpm row
 Three cohorts is a demonstration, not a controlled study — **no causal claim is
 made from this sample size.**
 
+## Live cohort results
+
+One run per cohort against the live funnel, from the deployed commit. Same lead,
+same ZIP, each in its own browser, context and IPRoyal sticky session.
+
+| cohort | range | target | **actual** | floor | paused | proxy IP | geo | certificate | submit |
+|---|---|---|---|---|---|---|---|---|---|
+| short | 10–35 s | 11.2 s | **22.93 s** | 17.70 s | 5.23 s | 96.240.6.112 | Jersey City, NJ | `3019736906c1…` | success |
+| medium | 35–100 s | 78.6 s | **94.09 s** | 24.98 s | 69.11 s | 72.68.117.141 | Jersey City, NJ | `dc8171792880…` | success |
+| long | 100–240 s | 152.6 s | **161.45 s** | 21.35 s | 140.10 s | 100.35.215.150 | Jersey City, NJ | `8e625be04ea7…` | success |
+
+Every run resolved to Jersey City, NJ on a Verizon residential IP, matching the
+submitted ZIP on city **and** state, and produced its own distinct certificate
+and capture file.
+
+### What TrustedForm reported for each
+
+| cohort | our typing baseline | our keystrokes | TF `kpm` | TF `wpm` | session | `nav_webdriver` |
+|---|---|---|---|---|---|---|
+| short | 442 cpm | 81 | 560.1 | 117.2 | 22.93 s | `true` |
+| medium | 233 cpm | 82 | 306.3 | 63.4 | 94.09 s | `true` |
+| long | 296 cpm | 83 | 385.0 | 76.4 | 161.45 s | `true` |
+
+Two observations, offered as observations and nothing more:
+
+- **`kpm` tracks typing rate, not session length.** The long run lasted 7× the
+  short run and typed one more character, yet reported a *lower* `kpm`. Ordering
+  by `kpm` reproduces the ordering by typing baseline (442 > 296 > 233), not by
+  duration. Across all three, TF `kpm` came out ≈1.3× the configured baseline,
+  and `wpm ≈ kpm / 4.8`.
+- **A longer session did not change what was recorded about the client.**
+  `nav_webdriver` was `true` in all three, as it was in the original NJ capture.
+
+**Three runs is a demonstration, not a study.** These are single observations per
+cohort, from one ZIP on one day; nothing here supports a causal claim, and no
+conclusion should be drawn about how any of these signals are scored.
+
+### Target adherence
+
+Each run overshot its target: +11.7 s (short), +15.5 s (medium), +8.9 s (long).
+The short target of 11.2 s was below the measured floor and was correctly
+flagged `targetUnreachable`; the other two were reachable and still overshot by
+10–20%, because the budget is divided across the steps still expected without
+reserving for the work between pauses. `actualDurationSec` is reported as
+measured and is never adjusted toward the target.
+
 ## User agent
 
 Headless runs report `HeadlessChrome/<version>` because the browser really is
