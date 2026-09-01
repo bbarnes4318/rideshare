@@ -173,6 +173,54 @@ async function main() {
     assert.strictEqual(res.body.phase, 'uploaded');
   });
 
+  await test('a batch whose runner is gone is reported failed, not running forever', async () => {
+    // The exact shape left behind when the server is restarted while a batch is
+    // in flight: phase "running" on disk, and a pid that no longer exists. The
+    // exit handler that would have written a terminal phase died with it.
+    const id = '2026-01-01T00-00-00-000Z-deadpd';
+    const dir = path.join(REPORT_DIR, 'uploads', id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'progress.json'), JSON.stringify({
+      batchId: id, phase: 'running', total: 383, completed: 20, submitted: 18,
+    }));
+    // A pid that cannot be running: the kernel refuses it as out of range.
+    fs.writeFileSync(path.join(dir, 'started.json'), JSON.stringify({ pid: 0x7ffffffe }));
+    // Real batches always carry meta.json; the listing route reads it.
+    fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({
+      batchId: id, filename: 'dead.csv', uploadedAt: '2026-01-01T00:00:00.000Z', usable: 383,
+    }));
+
+    const res = await request('GET', '/api/batch/' + id + '/status');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.phase, 'failed', JSON.stringify(res.body));
+    assert.strictEqual(res.body.completed, 20);
+    assert.ok(/no longer running/i.test(res.body.message), res.body.message);
+  });
+
+  await test('a batch that finished cleanly keeps its recorded phase', async () => {
+    const id = '2026-01-01T00-00-00-000Z-donebt';
+    const dir = path.join(REPORT_DIR, 'uploads', id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'progress.json'), JSON.stringify({
+      batchId: id, phase: 'done', total: 3, completed: 3, submitted: 3,
+    }));
+    fs.writeFileSync(path.join(dir, 'started.json'), JSON.stringify({ pid: 0x7ffffffe }));
+    fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({
+      batchId: id, filename: 'done.csv', uploadedAt: '2026-01-01T00:00:01.000Z', usable: 3,
+    }));
+
+    const res = await request('GET', '/api/batch/' + id + '/status');
+    assert.strictEqual(res.body.phase, 'done');
+  });
+
+  await test('the runner is spawned detached so a server restart cannot kill it', () => {
+    // Guarded here rather than by starting a batch, which would submit real
+    // leads. This is the line that cost a 383-row run when it was missing.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'batch.js'), 'utf8');
+    assert.ok(/detached:\s*true/.test(src), 'spawn must pass detached: true');
+    assert.ok(/child\.unref\(\)/.test(src), 'the child must be unref()d');
+  });
+
   await test('download 404s until a batch has produced output', async () => {
     const res = await request('GET', '/api/batch/' + batchId + '/download');
     assert.strictEqual(res.status, 404);

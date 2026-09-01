@@ -37,6 +37,46 @@ const MAX_CSV_BYTES = Number(process.env.BATCH_MAX_CSV_BYTES || 2 * 1024 * 1024)
 // proxy, and overlapping batches would fight for CPU and for proxy sessions.
 let activeBatchId = null;
 
+/**
+ * Rebuild what is actually running from disk.
+ *
+ * activeBatchId only ever lived in this module's memory, so a restart forgot
+ * that a batch was in flight: the UI polled a batch the server no longer
+ * claimed, and the one-at-a-time guard would have let a second batch start on
+ * top of the first. Worse, a batch killed with its parent kept phase "running"
+ * on disk forever, because the exit handler died with the process that owned
+ * it. Both are settled here, from the pid recorded at start.
+ */
+function reconcileRunningBatches() {
+  if (!fs.existsSync(UPLOAD_DIR)) return;
+  for (const id of fs.readdirSync(UPLOAD_DIR)) {
+    if (!BATCH_ID.test(id)) continue;
+    const dir = path.join(UPLOAD_DIR, id);
+    const progressPath = path.join(dir, 'progress.json');
+    const progress = readJson(progressPath);
+    if (!progress || (progress.phase !== 'running' && progress.phase !== 'starting')) continue;
+
+    const started = readJson(path.join(dir, 'started.json'), {});
+    if (runnerAlive(started.pid, id)) {
+      // Survived the restart, because it is spawned detached. Reclaim it.
+      activeBatchId = id;
+      continue;
+    }
+    try {
+      fs.writeFileSync(progressPath, JSON.stringify({
+        ...progress,
+        phase: 'failed',
+        message: 'The batch process is gone and the server did not record it finishing '
+          + '- typically the server was restarted while an older, non-detached runner '
+          + 'was in flight. Rows already completed are in this batch\'s CSV.',
+      }, null, 2));
+      console.warn('Batch ' + id + ' was marked failed: pid ' + started.pid + ' is no longer running.');
+    } catch (error) {
+      console.error('Could not reconcile batch ' + id, error);
+    }
+  }
+}
+
 // A CSV body can be larger than a typical JSON payload but must still be bounded.
 const jsonBody = express.json({ limit: '4mb' });
 
@@ -77,6 +117,25 @@ function ensureUploadDir() {
       + 'BEHAVIOR_REPORT_DIR at a writable directory.');
     err.operational = true;
     throw err;
+  }
+}
+
+/**
+ * Is this pid still the batch runner we started?
+ *
+ * A bare kill(pid, 0) is not enough on its own: pids are recycled, and a stale
+ * one that has been handed to something else would read as a batch still
+ * running. On Linux the cmdline settles it, so that is checked first.
+ */
+function runnerAlive(pid, batchId) {
+  if (!pid) return false;
+  try {
+    const cmdline = fs.readFileSync('/proc/' + pid + '/cmdline', 'utf8');
+    return cmdline.includes('batchCsvRunner') && cmdline.includes(batchId);
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;   // no such process
+    // No /proc (or no permission): fall back to a plain existence check.
+    try { process.kill(pid, 0); return true; } catch { return false; }
   }
 }
 
@@ -256,11 +315,18 @@ router.post('/:batchId/start', authenticateToken, jsonBody, (req, res) => {
   if (allowNonTest) args.push('--allow-non-test-records');
 
   const log = fs.openSync(logPath, 'a');
+  // Detached, and unref'd below. A batch is hours of real submissions against
+  // the live funnel; as a child of this process it died whenever the server was
+  // restarted - a deploy's `pm2 reload` tears down the whole process tree - and
+  // took the run with it mid-row. It owns its own process group now, so it
+  // outlives a restart, and reconcileRunningBatches() reclaims it afterwards.
   const child = spawn(process.execPath, args, {
     cwd: path.join(__dirname, '..'),
     env: process.env,
     stdio: ['ignore', log, log],
+    detached: true,
   });
+  child.unref();
 
   activeBatchId = batchId;
   fs.writeFileSync(progressPath, JSON.stringify({
@@ -299,8 +365,24 @@ router.get('/:batchId/status', authenticateToken, (req, res) => {
   if (!dir || !fs.existsSync(dir)) return res.status(404).json({ message: 'Unknown batch.' });
   const progress = readJson(path.join(dir, 'progress.json'));
   if (!progress) return res.json({ batchId: req.params.batchId, phase: 'uploaded' });
+
+  // A runner that died without writing a terminal phase would otherwise leave
+  // the page polling "running" forever. Check the pid rather than trust the file.
+  let phase = progress.phase;
+  if (phase === 'running' || phase === 'starting') {
+    const started = readJson(path.join(dir, 'started.json'), {});
+    if (!runnerAlive(started.pid, req.params.batchId)) {
+      phase = 'failed';
+      if (activeBatchId === req.params.batchId) activeBatchId = null;
+    }
+  }
+
   res.json({
     ...progress,
+    phase,
+    message: phase === 'failed' && progress.phase !== 'failed'
+      ? 'The batch process is no longer running. Whatever completed is in the CSV.'
+      : progress.message,
     isActive: activeBatchId === req.params.batchId,
     downloadReady: fs.existsSync(path.join(dir, 'leads.csv')),
   });
@@ -361,5 +443,13 @@ router.get('/', authenticateToken, (req, res) => {
     .slice(0, 50);
   res.json({ activeBatchId, batches });
 });
+
+// Runs at require time, i.e. once per server start - exactly when the in-memory
+// view of what is running has just been lost.
+try {
+  reconcileRunningBatches();
+} catch (error) {
+  console.error('Batch reconciliation failed at startup', error);
+}
 
 module.exports = router;
