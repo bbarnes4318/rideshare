@@ -17,6 +17,10 @@ function arg(name, fallback = undefined) {
   return process.argv[index + 1] ?? fallback;
 }
 
+function hasFlag(name) {
+  return process.argv.includes(`--${name}`);
+}
+
 function required(name, value) {
   if (value === undefined || value === null || value === '') {
     throw new Error(`Missing required value: ${name}`);
@@ -43,8 +47,6 @@ function getZipTarget(zip) {
     zip: normalizedZip,
     city: location.city,
     state: location.state,
-    // zipcodes reports the two-letter code (TN); IPRoyal's router expects the
-    // spelled-out state name (tennessee) in the password targeting suffix.
     stateName: zipcodes.states.abbr[location.state] || location.state,
     latitude: location.latitude,
     longitude: location.longitude,
@@ -52,8 +54,6 @@ function getZipTarget(zip) {
 }
 
 function buildProxyPassword(basePassword, location) {
-  // IPRoyal's documented residential router syntax supports country/state/city
-  // targeting in the password. We resolve the ZIP locally to its city and state.
   return [
     basePassword,
     'country-us',
@@ -62,9 +62,6 @@ function buildProxyPassword(basePassword, location) {
   ].join('_');
 }
 
-// The form's own submit handler emits MM/DD/YYYY, but the DOM control is an
-// <input type="date">, which only accepts YYYY-MM-DD via fill(). Convert here so
-// the CLI can keep taking --dob in MM/DD/YYYY.
 function toDateInputValue(value) {
   const raw = String(value).trim();
   const slashed = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
@@ -76,9 +73,21 @@ function toDateInputValue(value) {
   throw new Error(`Unsupported --dob value "${raw}". Use MM/DD/YYYY or YYYY-MM-DD.`);
 }
 
+function parseDurationSeconds() {
+  const raw = arg('duration', process.env.TEST_DURATION_SECONDS);
+  if (raw === undefined) return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0 || value > 3600) {
+    throw new Error('--duration must be a number between 0 and 3600 seconds.');
+  }
+  return value;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function getBrowserObservedIp(page) {
-  // Use the browser page itself so this check follows the exact same proxy path
-  // as the TrustedForm page and its third-party scripts.
   await page.goto(IP_CHECK_URL, { waitUntil: 'domcontentloaded', timeout: 15_000 });
   return (await page.locator('body').innerText()).trim();
 }
@@ -92,6 +101,22 @@ async function waitForTrustedFormCert(page) {
   return page.locator('#xxTrustedFormCertUrl').inputValue();
 }
 
+async function waitForControlledDwell(page, startTime, targetSeconds) {
+  if (targetSeconds === null) return;
+
+  const targetMs = targetSeconds * 1000;
+  const elapsedMs = Date.now() - startTime;
+  const remainingMs = targetMs - elapsedMs;
+
+  if (remainingMs > 0) {
+    console.log(`Controlled test dwell: waiting ${Math.ceil(remainingMs / 1000)}s before submission.`);
+    await sleep(remainingMs);
+  }
+
+  const actualSeconds = (Date.now() - startTime) / 1000;
+  console.log(`Controlled test dwell complete: ${actualSeconds.toFixed(2)}s elapsed.`);
+}
+
 async function main() {
   const username = required(
     'IPROYAL_PROXY_USERNAME or IPRoyal username',
@@ -102,6 +127,8 @@ async function main() {
     process.env.IPROYAL_PROXY_PASSWORD || process.env.IPROYAL_PASSWORD,
   );
   const zip = required('--zip', arg('zip', process.env.TEST_ZIP));
+  const durationSeconds = parseDurationSeconds();
+  const testMode = hasFlag('test-mode') || durationSeconds !== null;
 
   const location = getZipTarget(zip);
   const proxyPassword = buildProxyPassword(basePassword, location);
@@ -136,10 +163,10 @@ async function main() {
     zipCentroid: { latitude: location.latitude, longitude: location.longitude },
     proxyHost: PROXY_HOST,
     proxyPort: PROXY_PORT,
+    testMode,
+    targetDurationSeconds: durationSeconds,
   }, null, 2));
 
-  // Server-side diagnostic first: distinguishes an IPRoyal account/credential
-  // problem from a browser problem before Chromium is even started.
   const probeTarget = new URL(IP_CHECK_URL);
   const probe = await probeProxyConnect({
     host: PROXY_HOST,
@@ -161,7 +188,6 @@ async function main() {
   const browser = await chromium.launch({
     executablePath: browserPath,
     headless: process.env.HEADLESS !== 'false',
-    // Shared-CPU host: keep Chromium to a single lightweight instance.
     args: [
       '--no-sandbox',
       '--disable-dev-shm-usage',
@@ -191,13 +217,9 @@ async function main() {
     console.log(`Observed outbound browser IP through IPRoyal: ${observedIp}`);
 
     await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded' });
+    const pageStartTime = Date.now();
 
-    // TrustedForm runs in this browser session, so its network observations use
-    // the same residential proxy as the page and its third-party requests.
     const trustedFormCertUrlPromise = waitForTrustedFormCert(page);
-    // Filling the form takes several seconds; keep a handler attached so a
-    // TrustedForm timeout surfaces at the await below, not as an unhandled
-    // rejection that would kill the process mid-fill.
     trustedFormCertUrlPromise.catch(() => {});
 
     await page.locator('#zip').fill(payload.zip);
@@ -227,6 +249,13 @@ async function main() {
     const trustedFormCertUrl = await trustedFormCertUrlPromise;
     console.log(`TrustedForm certificate URL: ${trustedFormCertUrl}`);
 
+    // This is deliberately a controlled benchmark dwell, not an attempt to
+    // simulate or disguise human behavior. It lets the authorized test compare
+    // TrustedForm records at known page durations.
+    await waitForControlledDwell(page, pageStartTime, durationSeconds);
+
+    const actualDurationSeconds = (Date.now() - pageStartTime) / 1000;
+
     await page.locator('#submit-button').click();
     await page.waitForFunction(() => {
       const el = document.querySelector('#response-message');
@@ -247,9 +276,11 @@ async function main() {
     console.log(`Resolved State: ${location.state} (${location.stateName})`);
     console.log(`Proxy Host: ${PROXY_HOST}:${PROXY_PORT}`);
     console.log(`Observed Browser Public IP: ${observedIp}`);
+    console.log(`Target Duration: ${durationSeconds === null ? 'not specified' : `${durationSeconds}s`}`);
+    console.log(`Actual Page Duration: ${actualDurationSeconds.toFixed(2)}s`);
     console.log(`TrustedForm Certificate: ${trustedFormCertUrl}`);
-    console.log(`Form Response:`);
-    console.log(`${responseMessage}`);
+    console.log('Form Response:');
+    console.log(responseMessage);
     console.log('====================================================');
     console.log('');
     console.log('Residential-proxy TrustedForm submission completed successfully.');
