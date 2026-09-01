@@ -4,7 +4,9 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "Bash(ssh:*)"
+      "Bash(ssh:*)",
+      "Bash(git -C \"C:\\\\Users\\\\jimbo\\\\ameriquote-form\" status --short)",
+      "Bash(git -C \"C:\\\\Users\\\\jimbo\\\\ameriquote-form\" log --oneline -5)"
     ],
     "deny": []
   }
