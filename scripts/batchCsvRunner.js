@@ -278,6 +278,13 @@ async function main() {
   const outputRows = [];
   const omitted = [];
 
+  // Resolved before the loop, not after it. A 383-row batch runs for hours,
+  // and holding every accepted row in memory until the end meant an
+  // interrupted run - or simply one still in progress - had no CSV at all,
+  // even though most of the work was done. The file is rewritten after each
+  // accepted row instead, so whatever has completed is always downloadable.
+  const outputPath = path.resolve(arg('output', path.join(reportDir, 'leads-' + batchId + '.csv')));
+
   for (let i = 0; i < prepared.length; i += 1) {
     const { row, quals, cohort, answers } = prepared[i];
     const [lo, hi] = behavioral.COHORT_RANGES[cohort];
@@ -382,6 +389,11 @@ async function main() {
       datePosted: leadCsv.datePosted(),
     });
 
+    // Rewrite rather than append: writeOutputCsv owns the header and the
+    // column order, and rewriting a few hundred rows costs nothing next to
+    // the 30-60s each row already takes.
+    leadCsv.writeOutputCsv(outputPath, outputRows);
+
     writeProgress(progressPath, {
       batchId,
       phase: 'running',
@@ -408,7 +420,8 @@ async function main() {
   }
 
   // ---- outputs -------------------------------------------------------------
-  const outputPath = path.resolve(arg('output', path.join(reportDir, 'leads-' + batchId + '.csv')));
+  // The file has been kept current throughout the loop; this is the final flush,
+  // and it also covers a batch where no row was ever accepted.
   leadCsv.writeOutputCsv(outputPath, outputRows);
 
   const { jsonPath, runsDir } = reporting.writeReports({ reportDir, batchId, records });

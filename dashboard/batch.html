@@ -67,6 +67,21 @@
     Not signed in. <a href="/dashboard">Sign in to the dashboard</a> first, then reload this page.
   </div>
 
+  <!-- 0. recent batches -->
+  <div class="card hidden" id="recentCard">
+    <h2>Recent batches</h2>
+    <p class="sub" id="recentSummary">A batch keeps running on the server even if this page is
+      closed or reloaded. Anything listed here can be downloaded, finished or not.</p>
+    <div class="scroll">
+      <table id="recentTable">
+        <thead><tr>
+          <th>Uploaded</th><th>File</th><th>Phase</th><th>Progress</th><th>CSV</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- 1. upload -->
   <div class="card">
     <h2>1. Upload CSV</h2>
@@ -113,7 +128,9 @@
     <div id="confirmPending" class="note warn">Upload a CSV above first. This step &mdash; including
       the submit button below &mdash; unlocks once the preview succeeds.</div>
     <p class="sub">This submits to the live funnel and produces a real TrustedForm certificate
-       per accepted row. Runs are sequential; expect roughly 30&ndash;60 seconds per row.</p>
+       per accepted row. Runs are sequential; expect roughly 30&ndash;60 seconds per row &mdash; a
+       few hundred rows is a matter of hours. The CSV is written as the run goes, so you can
+       download what has completed at any point, and closing this page does not stop the run.</p>
     <div class="row" style="margin-bottom:14px">
       <label>Cohort
         <select id="cohort">
@@ -164,6 +181,7 @@
   var poll = null;
 
   if (!token) document.getElementById('authWarn').classList.remove('hidden');
+  else loadRecent();
 
   function api(url, options) {
     options = options || {};
@@ -191,6 +209,85 @@
   function esc(s) {
     return String(s === null || s === undefined ? '' : s).replace(/[&<>"]/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  // ---- 0. recent batches, and reattaching to one already running ----------
+  //
+  // batchId used to live only in this closure, so a reload or a stray
+  // navigation orphaned a running batch: the server kept submitting for hours
+  // while the page showed nothing and offered no way back to the CSV. The
+  // listing endpoint already knew all of this; it was simply never called.
+  function loadRecent() {
+    return api('/api/batch').then(function (data) {
+      var batches = data.batches || [];
+      var tb = document.querySelector('#recentTable tbody');
+      tb.innerHTML = batches.map(function (b) {
+        var pct = b.total ? Math.round((b.completed / b.total) * 100) : 0;
+        return '<tr>'
+          + '<td>' + esc(fmtTime(b.uploadedAt)) + '</td>'
+          + '<td>' + esc(b.filename || '') + '</td>'
+          + '<td>' + (b.phase === 'running' || b.phase === 'starting'
+              ? '<span class="pill ok">' + esc(b.phase) + '</span>'
+              : esc(b.phase)) + '</td>'
+          + '<td>' + esc(b.completed + ' / ' + b.total) + (b.total ? ' (' + pct + '%)' : '') + '</td>'
+          + '<td>' + (b.downloadReady
+              ? '<button class="secondary dl" data-batch="' + esc(b.batchId) + '">Download</button>'
+              : '<span class="sub">not yet</span>') + '</td>'
+          + '</tr>';
+      }).join('');
+
+      Array.prototype.forEach.call(tb.querySelectorAll('button.dl'), function (btn) {
+        btn.onclick = function () { downloadBatch(btn.getAttribute('data-batch')); };
+      });
+
+      if (batches.length) show('recentCard');
+
+      // Reattach to whatever is still going. activeBatchId is in-memory on the
+      // server, so it is empty after a restart; the phase on disk is the more
+      // durable signal and is checked too.
+      var live = data.activeBatchId;
+      if (!live) {
+        for (var i = 0; i < batches.length; i += 1) {
+          if (batches[i].phase === 'running' || batches[i].phase === 'starting') {
+            live = batches[i].batchId;
+            break;
+          }
+        }
+      }
+      if (live && !batchId) {
+        batchId = live;
+        show('progressCard');
+        document.getElementById('startMsg').textContent =
+          'Reattached to the batch already running on the server (' + live + ').';
+        startPolling();
+      }
+      return data;
+    }).catch(function () { /* the listing is a convenience; never block the page */ });
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    return isNaN(d.getTime()) ? iso : d.toLocaleString();
+  }
+
+  function downloadBatch(id) {
+    return fetch('/api/batch/' + id + '/download', {
+      headers: { Authorization: 'Bearer ' + token },
+    }).then(function (r) {
+      if (!r.ok) throw new Error('No CSV for that batch yet.');
+      return r.blob();
+    }).then(function (b) {
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(b);
+      a.download = 'leads-' + id + '.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    }).catch(function (e) {
+      document.getElementById('recentSummary').textContent = e.message;
     });
   }
 
@@ -357,6 +454,7 @@
       if (p.phase === 'done' || p.phase === 'failed') {
         clearInterval(poll);
         poll = null;
+        loadRecent();
         document.getElementById('startBtn').disabled = false;
         if (p.phase === 'failed') {
           document.getElementById('startMsg').textContent =
@@ -370,16 +468,7 @@
   }
 
   document.getElementById('downloadBtn').onclick = function () {
-    fetch('/api/batch/' + batchId + '/download', { headers: { Authorization: 'Bearer ' + token } })
-      .then(function (r) { return r.blob(); })
-      .then(function (b) {
-        var a = document.createElement('a');
-        a.href = URL.createObjectURL(b);
-        a.download = 'leads-' + batchId + '.csv';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      });
+    downloadBatch(batchId);
   };
 
   document.getElementById('logBtn').onclick = function () {
