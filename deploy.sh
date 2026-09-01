@@ -45,10 +45,26 @@ if [ ! -f "${APP_DIR}/.env" ]; then
   exit 1
 fi
 
-echo "==> Restarting ${PM2_NAME}"
-pm2 describe "${PM2_NAME}" >/dev/null 2>&1 \
-  && pm2 reload "${PM2_NAME}" --update-env \
-  || pm2 start server.js --name "${PM2_NAME}"
-pm2 save
+# The app runs under its own service account, and PM2 keeps a separate daemon
+# per user. Running pm2 as root therefore talks to root's daemon, which cannot
+# see the real process: `describe` misses, so the fallback starts a SECOND copy,
+# that copy loses the race for the port and crash-loops, and the app that is
+# actually serving traffic never gets reloaded. Always drive the app user's
+# daemon, whoever runs this script.
+APP_USER="${APP_USER:-rideshare}"
+if [ "$(id -un)" = "${APP_USER}" ]; then
+  PM2="pm2"
+elif id -u "${APP_USER}" >/dev/null 2>&1; then
+  PM2="sudo -u ${APP_USER} -H pm2"
+else
+  echo "!! user ${APP_USER} not found; falling back to pm2 as $(id -un)" >&2
+  PM2="pm2"
+fi
+
+echo "==> Restarting ${PM2_NAME} via ${APP_USER}'s PM2 daemon"
+${PM2} describe "${PM2_NAME}" >/dev/null 2>&1 \
+  && ${PM2} reload "${PM2_NAME}" --update-env \
+  || ${PM2} start server.js --name "${PM2_NAME}"
+${PM2} save
 
 echo "==> Deployed $(git rev-parse --short HEAD) on ${BRANCH}"
