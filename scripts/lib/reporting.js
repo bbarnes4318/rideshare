@@ -47,8 +47,26 @@ function parsePayload(text) {
   return any ? out : null;
 }
 
-// Keep the series bounded: a long session can ping many times.
+// Keep the series bounded: a long session can ping many times. When a session
+// exceeds the cap the series keeps a head and a tail window rather than the
+// first N -- the first pings carry the pre-interaction zeros and the last ping
+// is the value `signals` reports, so both ends have to survive. Whatever falls
+// out of the middle is counted in `seriesElided`, never dropped silently.
 const MAX_SERIES = 100;
+const SERIES_HEAD = Math.ceil(MAX_SERIES / 2);
+const SERIES_TAIL = MAX_SERIES - SERIES_HEAD;
+
+function recordSeriesValue(windows, leaf, value) {
+  let w = windows[leaf];
+  if (!w) w = windows[leaf] = { head: [], tail: [], observed: 0 };
+  w.observed += 1;
+  if (w.head.length < SERIES_HEAD) {
+    w.head.push(value);
+    return;
+  }
+  w.tail.push(value);
+  if (w.tail.length > SERIES_TAIL) w.tail.shift();
+}
 
 /**
  * Extract whatever TrustedForm signals the capture actually contains.
@@ -59,7 +77,10 @@ const MAX_SERIES = 100;
  * Reporting that first ping would understate every run. `signals` therefore
  * carries the last value seen for each key (the state closest to submission),
  * and `series` carries the ordered values so the progression, including the
- * leading zeros, stays visible in the report.
+ * leading zeros, stays visible in the report. A series longer than MAX_SERIES
+ * is windowed to its head and tail; `seriesElided` then records, per key, how
+ * many pings were observed, how many were kept, and at which index the gap
+ * falls, so a windowed series is never mistaken for a complete one.
  *
  * A key the capture never contained is reported as null. Nothing is inferred,
  * defaulted or derived.
@@ -68,7 +89,7 @@ function extractTrustedFormSignals(captureEvents) {
   const signals = {};
   for (const key of CANONICAL_SIGNALS) signals[key] = null;
 
-  const series = {};
+  const seriesWindows = {};
   const observedKeys = new Set();
   let sourceCount = 0;
 
@@ -84,15 +105,30 @@ function extractTrustedFormSignals(captureEvents) {
         const known = Object.prototype.hasOwnProperty.call(signals, leaf);
         if (!known && typeof value !== 'number' && typeof value !== 'boolean') continue;
         signals[leaf] = value;
-        if (!series[leaf]) series[leaf] = [];
-        if (series[leaf].length < MAX_SERIES) series[leaf].push(value);
+        recordSeriesValue(seriesWindows, leaf, value);
       }
+    }
+  }
+
+  const series = {};
+  const seriesElided = {};
+  for (const [leaf, w] of Object.entries(seriesWindows)) {
+    series[leaf] = w.head.concat(w.tail);
+    if (w.observed > series[leaf].length) {
+      seriesElided[leaf] = {
+        observed: w.observed,
+        kept: series[leaf].length,
+        elided: w.observed - series[leaf].length,
+        gapIndex: w.head.length,
+      };
     }
   }
 
   return {
     signals,
     series,
+    seriesElided,
+    seriesLimit: MAX_SERIES,
     observedKeys: [...observedKeys].sort(),
     sourceCount,
     policy: 'last-observed',

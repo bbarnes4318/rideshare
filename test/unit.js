@@ -183,6 +183,34 @@ test('the LAST ping wins, because the first one always precedes any typing', () 
   assert.deepStrictEqual(series.wpm, [0, 11, 19], 'the progression stays visible');
 });
 
+test('a series past the cap keeps both ends, so it cannot contradict the signal', () => {
+  // A 194-second session pings TrustedForm far more than a hundred times. When
+  // the series kept the FIRST hundred, its last entry was some early, smaller
+  // number while `signals` reported the true last value - two pieces of the
+  // same evidence disagreeing. Head and tail are kept instead.
+  const pings = Array.from({ length: 342 }, (_, i) => ({ dir: 'REQ', post: JSON.stringify({ kpm: i }) }));
+  const { signals, series, seriesElided, seriesLimit } = reporting.extractTrustedFormSignals(pings);
+
+  assert.strictEqual(series.kpm.length, seriesLimit, 'the series must stay bounded');
+  assert.strictEqual(series.kpm[0], 0, 'the pre-interaction zero must survive');
+  assert.strictEqual(series.kpm[series.kpm.length - 1], signals.kpm,
+    'the series must end on the value the report claims');
+  assert.strictEqual(signals.kpm, 341);
+
+  // What fell out of the middle is counted, not passed over in silence.
+  assert.deepStrictEqual(seriesElided.kpm, {
+    observed: 342, kept: seriesLimit, elided: 342 - seriesLimit, gapIndex: series.kpm.indexOf(292),
+  });
+});
+
+test('a series inside the cap is complete, and reports no elision at all', () => {
+  const pings = Array.from({ length: 40 }, (_, i) => ({ dir: 'REQ', post: JSON.stringify({ kpm: i }) }));
+  const { series, seriesElided } = reporting.extractTrustedFormSignals(pings);
+  assert.strictEqual(series.kpm.length, 40);
+  assert.deepStrictEqual(series.kpm, Array.from({ length: 40 }, (_, i) => i));
+  assert.strictEqual(seriesElided.kpm, undefined, 'nothing was dropped, so nothing may be claimed');
+});
+
 test('extractTrustedFormSignals returns nulls for an empty capture', () => {
   const { signals, sourceCount } = reporting.extractTrustedFormSignals([]);
   assert.deepStrictEqual(signals, { wpm: null, kpm: null });

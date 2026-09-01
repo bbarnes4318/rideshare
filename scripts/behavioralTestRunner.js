@@ -893,6 +893,9 @@ async function runOnce(options) {
     const extracted = reporting.extractTrustedFormSignals(captureSnapshot);
     record.trustedForm.signals = extracted.signals;
     record.trustedForm.signalSeries = extracted.series;
+    // Present only when a series outran the cap; names what was windowed out.
+    record.trustedForm.signalSeriesElided = extracted.seriesElided;
+    record.trustedForm.signalSeriesLimit = extracted.seriesLimit;
     record.trustedForm.signalPolicy = extracted.policy;
     record.trustedForm.observedSignalKeys = extracted.observedKeys;
     record.trustedForm.signalPayloadCount = extracted.sourceCount;

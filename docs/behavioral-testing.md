@@ -200,9 +200,17 @@ Extraction flattens every TrustedForm request payload and response body the
 browser exchanged, and reports the values under the key names TrustedForm
 actually used. Policy is **last observed**, not first: TrustedForm's script pings
 from page load onwards, so the earliest payload of any session predates all
-interaction and reads zero for anything cumulative. `signalSeries` keeps the full
+interaction and reads zero for anything cumulative. `signalSeries` keeps the
 ordered progression, including those leading zeros, so nothing is hidden by the
 choice.
+
+A long session pings more often than the series is allowed to hold
+(`signalSeriesLimit`, 100). It is then windowed to its **head and tail** rather
+than truncated: the first entry is always the first ping observed and the last
+entry is always the value reported in `signals`, so the two can never disagree.
+`signalSeriesElided` appears only when that happened, and says how many pings
+were observed, how many were kept, and the index the gap falls at. A windowed
+series is never presented as a complete one.
 
 A signal the capture never contained is reported as `null` — never `0`, never a
 guess. A signal the capture reported as `0` is reported as `0`. Nothing is
