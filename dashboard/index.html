@@ -13,8 +13,20 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.min.js"></script>
+    <!-- Chart.js. Served from our own origin: the jsDelivr path we used before
+         (dist/chart.min.js) does not exist in v4, so the CDN silently minified
+         the ESM build instead, which a classic script tag cannot execute. The
+         UMD build is the one that defines window.Chart. -->
+    <script src="/dashboard/vendor/chart.umd.min.js"></script>
+    <script>
+      // Only if the local copy is missing, fall back to the CDN - and to the
+      // UMD path this time.
+      if (typeof Chart === "undefined") {
+        document.write(
+          '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"><\/script>'
+        );
+      }
+    </script>
     
     <!-- Leaflet for maps -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />

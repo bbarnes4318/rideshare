@@ -176,12 +176,13 @@ class RideshareDashboard {
   }
 
   createCharts(data) {
-    // Charts are decorative. They come from a CDN, and if that is blocked or a
-    // single chart config throws, the metrics and tables are still perfectly
-    // good - so a chart failure is reported once and does not take down the
-    // whole dashboard load.
+    // Charts are decorative. If Chart.js is missing or a single chart config
+    // throws, the metrics and tables are still perfectly good - so a chart
+    // failure is reported once and does not take down the whole dashboard load.
     if (typeof Chart === "undefined") {
-      this.showError("Charts unavailable: the Chart.js CDN did not load. Metrics still work.");
+      this.showError("Charts unavailable: Chart.js did not define window.Chart "
+        + "(check /dashboard/vendor/chart.umd.min.js loads and is the UMD build). "
+        + "Metrics still work.");
       return;
     }
     const safely = (name, fn, arg) => {
