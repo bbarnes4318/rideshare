@@ -10,7 +10,12 @@
     "build": "echo 'Build complete - static files ready'",
     "deploy": "bash deploy.sh",
     "install-deps": "npm install",
-    "submit:proxy": "node scripts/submitWithResidentialProxy.js"
+    "submit:proxy": "node scripts/submitWithResidentialProxy.js",
+    "submit:production": "node scripts/submitProductionFunnel.js",
+    "behavior:test": "node scripts/behavioralTestRunner.js",
+    "test": "npm run test:unit && npm run test:offline",
+    "test:unit": "node test/unit.js",
+    "test:offline": "node test/offline-selftest.js"
   },
   "dependencies": {
     "axios": "^1.6.2",

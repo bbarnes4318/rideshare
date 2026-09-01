@@ -146,3 +146,6 @@ Thumbs.db
 deploy_key*
 github-secret.txt
 .env.residential-proxy
+
+# Behavioral test harness output (reports, per-run JSON, TrustedForm captures)
+test-reports/

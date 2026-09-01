@@ -1,5 +1,10 @@
 # TrustedForm residential-IP testing
 
+> For the controlled behavioral study (randomized session durations, interaction
+> timelines, cohorts and JSON/CSV reports), see
+> [behavioral-testing.md](behavioral-testing.md). It reuses the proxy, ZIP
+> routing and TrustedForm capture described here rather than replacing them.
+
 The existing `/api-proxy/` endpoint cannot change the IP TrustedForm observes because TrustedForm's script executes in the visitor browser. The test runner therefore launches the actual browser through IPRoyal before opening `quotes.nationallifecoverage.org`.
 
 ## How the ZIP is mapped

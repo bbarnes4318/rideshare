@@ -10,197 +10,53 @@
 // funnel at /fv3/nationallifecoverage/1051/, whose DOM and step flow are
 // completely different (#zipCode, not #zip; a 16-step hash-routed wizard, not a
 // single page). Selectors here were read off the live page, not assumed.
+//
+// The IPRoyal targeting, ZIP resolution, sticky-session selection, TrustedForm
+// wait and TrustedForm capture now live in scripts/lib/funnelCore.js so that
+// scripts/behavioralTestRunner.js drives the same implementation rather than a
+// copy of it. The flow below is unchanged.
 
 require('dotenv').config();
 
-const fs = require('fs');
 const { chromium } = require('playwright-core');
-const zipcodes = require('zipcodes');
 const {
-  probeProxyConnect,
-  describeProxyFailure,
+  TARGET_URL,
+  PROXY_HOST,
+  PROXY_PORT,
+  IP_CHECK_URL,
+  LAUNCH_ARGS,
+  CSS_ID,
+  arg,
+  required,
+  normalizeProxyToken,
+  getZipTarget,
+  selectResidentialSession,
+  preflightProxy,
+  waitForTrustedFormCert,
+  attachTrustedFormCapture,
+  writeCapture,
+  certIdFromUrl,
+  resolveBrowserPath,
   lookupIpGeo,
-  fetchThroughProxy,
-} = require('./proxyDiagnostics');
+  buildAnswers,
+  readStep,
+  planField,
+  isFinalStep,
+  buildLead,
+} = require('./lib/funnelCore');
 
-const TARGET_URL = process.env.PRODUCTION_FUNNEL_URL || 'https://quotes.nationallifecoverage.org/';
-const PROXY_HOST = process.env.IPROYAL_PROXY_HOST || 'geo.iproyal.com';
-const PROXY_PORT = Number(process.env.IPROYAL_PROXY_PORT || 12321);
-const IP_CHECK_URL = process.env.PROXY_IP_CHECK_URL || 'https://ipv4.icanhazip.com';
-const SESSION_PROBE_URL = process.env.PROXY_SESSION_PROBE_URL || 'http://ipv4.icanhazip.com';
-const SESSION_ATTEMPTS = Number(process.env.IPROYAL_SESSION_ATTEMPTS || 8);
-const SESSION_LIFETIME_MINUTES = Number(process.env.IPROYAL_SESSION_LIFETIME_MINUTES || 30);
-const MAX_STEPS = Number(process.env.FUNNEL_MAX_STEPS || 30);
-
-function arg(name, fallback) {
-  const i = process.argv.indexOf('--' + name);
-  return i === -1 ? fallback : (process.argv[i + 1] ?? fallback);
-}
-
-function required(name, value) {
-  if (value === undefined || value === null || value === '') {
-    throw new Error('Missing required value: ' + name);
-  }
-  return String(value);
-}
-
-// IPRoyal location tokens are lowercase alphanumeric with NO separator:
-// "_city-losangeles" resolves, "_city-los-angeles" is refused outright.
-function normalizeProxyToken(value) {
-  return String(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
-}
-
-// IPRoyal documents targeting as country + city with no state token, and that
-// lands more accurately than adding one. Widen only if a tier has no peers.
-const TARGETING_TIERS = [
-  { name: 'city (IPRoyal country+city form)', state: false, city: true },
-  { name: 'state only', state: true, city: false },
-  { name: 'country only', state: false, city: false },
-];
-
-function getZipTarget(zip) {
-  const normalizedZip = String(zip).trim().slice(0, 5);
-  const location = zipcodes.lookup(normalizedZip);
-  if (!location) throw new Error('ZIP ' + normalizedZip + ' could not be resolved locally.');
-  return {
-    zip: normalizedZip,
-    city: location.city,
-    state: location.state,
-    stateName: zipcodes.states.abbr[location.state] || location.state,
-    latitude: location.latitude,
-    longitude: location.longitude,
-  };
-}
-
-function buildProxyPassword(basePassword, location, session, tier = TARGETING_TIERS[0]) {
-  const tokens = [basePassword, 'country-us'];
-  if (tier.state) tokens.push('state-' + normalizeProxyToken(location.stateName));
-  if (tier.city) tokens.push('city-' + normalizeProxyToken(location.city));
-  // Pin one peer for the whole run; IPRoyal otherwise rotates per request and
-  // TrustedForm would observe several different source IPs in one session.
-  if (session) tokens.push('session-' + session, 'lifetime-' + SESSION_LIFETIME_MINUTES + 'm');
-  return tokens.join('_');
-}
-
-async function selectResidentialSession({ host, port, username, basePassword, location }) {
-  let fallback = null;
-  for (const tier of TARGETING_TIERS) {
-    console.log('  targeting: ' + tier.name);
-    let anyEgress = false;
-    for (let attempt = 1; attempt <= SESSION_ATTEMPTS; attempt += 1) {
-      const session = 'nlc' + Math.random().toString(36).slice(2, 10);
-      const password = buildProxyPassword(basePassword, location, session, tier);
-      const result = await fetchThroughProxy({ host, port, username, password, url: SESSION_PROBE_URL });
-      if (!result.ok || !/^\d{1,3}(\.\d{1,3}){3}$/.test(result.body)) {
-        console.log('    probe ' + attempt + '/' + SESSION_ATTEMPTS + ': no usable egress ('
-          + (result.error || 'HTTP ' + result.statusCode) + ')');
-        continue;
-      }
-      anyEgress = true;
-      const ip = result.body;
-      const geo = await lookupIpGeo(ip);
-      const cityMatch = geo && normalizeProxyToken(geo.city) === normalizeProxyToken(location.city);
-      const stateMatch = geo && normalizeProxyToken(geo.regionName) === normalizeProxyToken(location.stateName);
-      console.log('    probe ' + attempt + '/' + SESSION_ATTEMPTS + ': ' + ip + ' -> '
-        + (geo ? geo.city + ', ' + geo.regionName : 'unknown location'));
-      if (cityMatch && stateMatch) {
-        console.log('  matched ' + location.city + ', ' + location.state + ' via ' + tier.name);
-        return { session, password, ip, geo, match: 'city + state matched', tier: tier.name };
-      }
-      if (stateMatch && (!fallback || fallback.match !== 'state matched, city did not')) {
-        fallback = { session, password, ip, geo, match: 'state matched, city did not', tier: tier.name };
-      } else if (!fallback) {
-        fallback = { session, password, ip, geo, match: 'NOT matched - wider pool', tier: tier.name };
-      }
-    }
-    if (!anyEgress) { console.log('  no peers for ' + tier.name + '; widening'); continue; }
-    if (fallback && fallback.match === 'state matched, city did not') break;
-  }
-  if (!fallback) throw new Error('No usable IPRoyal residential session for ' + location.city + ', ' + location.state);
-  console.log('  no exact city match; using best available (' + fallback.match + ')');
-  return fallback;
-}
-
-// ---------------------------------------------------------------------------
-// Production funnel step handling.
-//
-// The wizard is AngularJS and hash-routed. Each step is either a set of choice
-// links (<a> elements) or input fields followed by <a class="btn-next">.
-// Answers are keyed by the step's hash route, read off the live funnel.
-// ---------------------------------------------------------------------------
-
-const CSS_ID = (id) => '[id="' + id + '"]';
-
-function buildAnswers() {
-  return {
-    '#/gender': arg('gender', 'Male'),
-    '#/currently-insured': arg('currently-insured', 'No'),
-    '#/credit-score': arg('credit', '700-640 Good'),
-    '#/marriage-status': arg('marital', 'No'),
-    '#/homeowner': arg('homeowner', 'No'),
-    '#/va-loan': arg('military', 'No'),
-    '#/tobacco-use': arg('tobacco', 'No'),
-    '#/cancer': arg('cancer', 'No'),
-    '#/heart-disease': arg('heart-disease', 'No'),
-    '#/coverage-amount': arg('coverage', '$25,000 (Funeral Expenses)'),
-  };
-}
-
-const readStep = () => {
-  const vis = (e) => !!(e.offsetParent || e.getClientRects().length);
-  const isQ = (e) => vis(e) && e.children.length === 0 && (e.textContent || '').trim().endsWith('?');
-  return {
-    hash: location.hash || '#/',
-    question: ([...document.querySelectorAll('h1,h2,h3,p,label,div,span')].filter(isQ)[0] || {})
-      .textContent?.trim().slice(0, 90) || '',
-    fields: [...document.querySelectorAll('input,select,textarea')].filter(vis).map((e) => ({
-      tag: e.tagName.toLowerCase(), type: e.type || '', id: e.id || '', name: e.name || '',
-      ph: e.placeholder || '',
-      opts: e.tagName === 'SELECT' ? [...e.options].map((o) => o.value) : undefined,
-    })),
-    choices: [...document.querySelectorAll('a')].filter(vis)
-      .map((e) => (e.textContent || '').trim())
-      .filter((t) => t && t.length < 40 && !/call now|888-|privacy|terms|do not sell|^X$/i.test(t)),
-    tfCert: document.querySelector('input[name=xxTrustedFormCertUrl]')?.value || null,
-  };
-};
-
+// Deliver a step's planned values the way production always has: set the value
+// directly. The behavioral harness types instead; see docs/behavioral-testing.md.
 async function fillStepFields(page, fields, lead) {
-  for (const f of fields) {
-    const key = (f.id || f.name).toLowerCase();
-    const sel = f.id ? CSS_ID(f.id) : '[name="' + f.name + '"]';
-    if (f.tag === 'select') {
-      const real = (f.opts || []).filter((v) => v !== '');
-      if (!real.length) continue;
-      let value = real[0];
-      // Angular emits "string:N" month values, zero-based.
-      if (key.includes('month')) value = real[lead.birthMonth - 1] || real[0];
-      else if (key.includes('height')) value = real.includes(lead.height) ? lead.height : real[0];
-      await page.locator(sel).selectOption(value).catch(() => {});
-      continue;
-    }
-    let value = null;
-    if (key.includes('zip')) value = lead.zip;
-    else if (key.includes('day')) value = lead.birthDay;
-    else if (key.includes('year')) value = lead.birthYear;
-    else if (key.includes('height')) value = lead.height;
-    else if (key.includes('weight')) value = lead.weight;
-    else if (key.includes('address')) value = lead.address;
-    else if (key.includes('firstname')) value = lead.fname;
-    else if (key.includes('lastname')) value = lead.lname;
-    else if (key.includes('email')) value = lead.email;
-    else if (key.includes('phone')) value = lead.phone;
-    if (value !== null) await page.locator(sel).fill(String(value)).catch(() => {});
+  for (const field of fields) {
+    const plan = planField(field, lead);
+    if (!plan) continue;
+    if (plan.kind === 'select') await page.locator(plan.selector).selectOption(plan.value).catch(() => {});
+    else await page.locator(plan.selector).fill(plan.value).catch(() => {});
   }
 }
 
-async function waitForTrustedFormCert(page, timeout = 45000) {
-  await page.waitForFunction(() => {
-    const f = document.querySelector('input[name=xxTrustedFormCertUrl]');
-    return f && /^https?:\/\//i.test(f.value || '');
-  }, { timeout });
-  return page.evaluate(() => document.querySelector('input[name=xxTrustedFormCertUrl]').value);
-}
+const MAX_STEPS = Number(process.env.FUNNEL_MAX_STEPS || 30);
 
 async function main() {
   const username = required('IPROYAL_PROXY_USERNAME', process.env.IPROYAL_PROXY_USERNAME);
@@ -208,23 +64,7 @@ async function main() {
   const zip = required('--zip', arg('zip', process.env.TEST_ZIP));
   const location = getZipTarget(zip);
 
-  const dob = required('--dob', arg('dob', process.env.TEST_DOB));
-  const dobParts = dob.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!dobParts) throw new Error('--dob must be MM/DD/YYYY, got "' + dob + '"');
-
-  const lead = {
-    zip: location.zip,
-    birthMonth: Number(dobParts[1]),
-    birthDay: dobParts[2],
-    birthYear: dobParts[3],
-    height: arg('height', '70'),
-    weight: arg('weight', '160'),
-    address: required('--address', arg('address', process.env.TEST_ADDRESS)),
-    fname: required('--fname', arg('fname', process.env.TEST_FNAME)),
-    lname: required('--lname', arg('lname', process.env.TEST_LNAME)),
-    email: required('--email', arg('email', process.env.TEST_EMAIL)),
-    phone: required('--phone', arg('phone', process.env.TEST_PHONE)),
-  };
+  const lead = buildLead(location);
   const answers = buildAnswers();
 
   console.log(JSON.stringify({
@@ -238,15 +78,9 @@ async function main() {
   }, null, 2));
 
   // Account check first (402 = no balance, 407 = bad credentials).
-  const probeTarget = new URL(IP_CHECK_URL);
-  const probe = await probeProxyConnect({
-    host: PROXY_HOST,
-    port: PROXY_PORT,
-    username,
-    password: buildProxyPassword(basePassword, location, null, TARGETING_TIERS[TARGETING_TIERS.length - 1]),
-    target: probeTarget.hostname + ':' + (probeTarget.port || 443),
+  const probe = await preflightProxy({
+    host: PROXY_HOST, port: PROXY_PORT, username, basePassword, location, ipCheckUrl: IP_CHECK_URL,
   });
-  if (!probe.ok) throw new Error(describeProxyFailure(probe));
   console.log('IPRoyal CONNECT preflight: HTTP ' + probe.statusCode + ' (tunnel established)');
 
   console.log('Selecting a residential session near ' + location.city + ', ' + location.state + ':');
@@ -254,16 +88,10 @@ async function main() {
     host: PROXY_HOST, port: PROXY_PORT, username, basePassword, location,
   });
 
-  const browserPath = process.env.CHROME_EXECUTABLE_PATH || process.env.CHROMIUM_EXECUTABLE_PATH;
-  if (!browserPath) throw new Error('Set CHROME_EXECUTABLE_PATH to a local Chromium/Chrome executable.');
-
   const browser = await chromium.launch({
-    executablePath: browserPath,
+    executablePath: resolveBrowserPath(),
     headless: process.env.HEADLESS !== 'false',
-    args: [
-      '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
-      '--disable-background-networking', '--disable-extensions', '--renderer-process-limit=2',
-    ],
+    args: LAUNCH_ARGS,
     proxy: {
       server: 'http://' + PROXY_HOST + ':' + PROXY_PORT,
       username,
@@ -285,22 +113,7 @@ async function main() {
     // --capture <file> records everything the browser exchanges with
     // TrustedForm, so the certificate's contents can be inspected afterwards.
     const capturePath = arg('capture', null);
-    const captured = [];
-    if (capturePath) {
-      page.on('request', (req) => {
-        if (!/trustedform/i.test(req.url())) return;
-        captured.push({ dir: 'REQ', method: req.method(), url: req.url(), type: req.resourceType(), post: req.postData() || null });
-      });
-      page.on('response', async (res) => {
-        if (!/trustedform/i.test(res.url())) return;
-        let body = null;
-        try {
-          const ct = res.headers()['content-type'] || '';
-          if (/json|text/i.test(ct)) body = (await res.text()).slice(0, 2000);
-        } catch { /* body unavailable */ }
-        captured.push({ dir: 'RES', status: res.status(), url: res.url(), body });
-      });
-    }
+    const captured = capturePath ? attachTrustedFormCapture(page) : null;
 
     await page.goto(IP_CHECK_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
     observedIp = (await page.locator('body').innerText()).trim();
@@ -319,7 +132,7 @@ async function main() {
       const s = await page.evaluate(readStep);
       console.log('  step ' + step + ' ' + s.hash + (s.question ? '  "' + s.question + '"' : ''));
 
-      const isFinal = s.fields.some((f) => /email|phone|firstname|lastname/i.test(f.id + f.name));
+      const isFinal = isFinalStep(s.fields);
       await fillStepFields(page, s.fields, lead);
 
       if (isFinal) {
@@ -383,21 +196,16 @@ async function main() {
     console.log('IP matches submitted ZIP: ' + (cityMatch && stateMatch ? 'YES (city + state)' : stateMatch ? 'state only' : 'NO'));
     console.log('IPRoyal Targeting Used: ' + selection.tier);
     console.log('TrustedForm Certificate: ' + trustedFormCertUrl);
-    console.log('TrustedForm Certificate ID: ' + String(trustedFormCertUrl).split('/').pop());
+    console.log('TrustedForm Certificate ID: ' + certIdFromUrl(trustedFormCertUrl));
     console.log('Post-submit URL: ' + finalUrl);
     console.log('Post-submit page: ' + outcome);
     console.log('====================================================');
     console.log('');
     if (capturePath) {
-      fs.writeFileSync(capturePath, JSON.stringify({
-        certUrl: trustedFormCertUrl,
-        certId: String(trustedFormCertUrl).split('/').pop(),
-        egressIp: observedIp,
-        egressGeo: observedGeo ? observedGeo.city + ', ' + observedGeo.regionName + ', ' + observedGeo.isp : null,
-        pageUrl: finalUrl,
-        events: captured,
-      }, null, 1));
-      console.log('TrustedForm capture written to ' + capturePath + ' (' + captured.length + ' events)');
+      const count = writeCapture(capturePath, {
+        certUrl: trustedFormCertUrl, observedIp, observedGeo, finalUrl, events: captured,
+      });
+      console.log('TrustedForm capture written to ' + capturePath + ' (' + count + ' events)');
     }
     console.log('Production funnel submission completed successfully.');
   } finally {
