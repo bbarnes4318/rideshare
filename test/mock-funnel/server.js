@@ -37,12 +37,20 @@ const STEPS = [
   { hash: '#/heart-disease', question: 'Have you been diagnosed with heart disease?', choices: ['Yes', 'No'] },
   { hash: '#/coverage-amount', question: 'How much coverage do you need?', choices: ['$25,000 (Funeral Expenses)', '$50,000', '$100,000'] },
   {
-    hash: '#/height-weight',
-    question: 'What is your height and weight?',
+    // Mirrors the live funnel: height is a <select> of INCHES, and weight is a
+    // separate step carrying an angularjs-slider rather than an <input>. The
+    // real form has no weight input at all, so a mock with one cannot catch a
+    // regression in the harness's slider handling.
+    hash: '#/height',
+    question: 'What is your height?',
     fields: [
-      { tag: 'select', id: 'height', options: ['', '66', '68', '70', '72'] },
-      { tag: 'input', id: 'weight', type: 'tel' },
+      { tag: 'select', id: 'vm.height', options: ['', '55', '60', '63', '64', '66', '67', '68', '69', '70', '71', '72', '75', '76', '83'] },
     ],
+  },
+  {
+    hash: '#/weight',
+    question: 'How much do you weigh?',
+    slider: { min: 100, max: 400, value: 160 },
   },
   {
     hash: '#/verify-information',
@@ -108,6 +116,41 @@ const PAGE = `<!doctype html>
         el.appendChild(input);
       }
     });
+    if (step.slider) {
+      var s = document.createElement('span');
+      s.setAttribute('role', 'slider');
+      s.className = 'rz-pointer rz-pointer-min';
+      s.setAttribute('tabindex', '0');
+      s.setAttribute('aria-valuemin', String(step.slider.min));
+      s.setAttribute('aria-valuemax', String(step.slider.max));
+      s.setAttribute('aria-valuenow', String(step.slider.value));
+      s.textContent = '●';
+      // angularjs-slider's keyboard contract: arrows step by one, page keys by
+      // 10% of the range, home/end jump to the bounds.
+      s.addEventListener('keydown', function (ev) {
+        var now = Number(s.getAttribute('aria-valuenow'));
+        var min = Number(s.getAttribute('aria-valuemin'));
+        var max = Number(s.getAttribute('aria-valuemax'));
+        var page = Math.round((max - min) / 10);
+        var next = now;
+        if (ev.key === 'ArrowRight' || ev.key === 'ArrowUp') next = now + 1;
+        else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowDown') next = now - 1;
+        else if (ev.key === 'PageUp') next = now + page;
+        else if (ev.key === 'PageDown') next = now - page;
+        else if (ev.key === 'Home') next = min;
+        else if (ev.key === 'End') next = max;
+        else return;
+        ev.preventDefault();
+        next = Math.max(min, Math.min(max, next));
+        s.setAttribute('aria-valuenow', String(next));
+        readout.textContent = String(next) + ' lbs';
+      });
+      el.appendChild(s);
+      var readout = document.createElement('div');
+      readout.className = 'rz-bubble';
+      readout.textContent = String(step.slider.value) + ' lbs';
+      el.appendChild(readout);
+    }
     (step.choices || []).forEach(function (c) {
       var a = document.createElement('a');
       a.href = 'javascript:void(0)';
@@ -116,7 +159,7 @@ const PAGE = `<!doctype html>
       el.appendChild(a);
       el.appendChild(document.createElement('br'));
     });
-    if (step.fields && !step.submit) {
+    if ((step.fields || step.slider) && !step.submit) {
       var next = document.createElement('a');
       next.href = 'javascript:void(0)';
       next.className = 'btn-next';

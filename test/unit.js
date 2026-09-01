@@ -242,6 +242,198 @@ test('median averages the middle pair for even counts', () => {
   assert.strictEqual(reporting.median([]), null);
 });
 
+// ---------------------------------------------------------------------------
+// Batch CSV harness: sanitization, and the qualification distributions.
+// ---------------------------------------------------------------------------
+
+const leadCsv = require('../scripts/lib/leadCsv');
+const qual = require('../scripts/lib/qualification');
+
+test('CSV parsing handles quotes, embedded commas and embedded newlines', () => {
+  const rows = leadCsv.parseCsv('a,b,c\n1,"x, y",3\n4,"he said ""hi""",6\n7,"two\nlines",9\n');
+  assert.deepStrictEqual(rows[0], ['a', 'b', 'c']);
+  assert.deepStrictEqual(rows[1], ['1', 'x, y', '3']);
+  assert.deepStrictEqual(rows[2], ['4', 'he said "hi"', '6']);
+  assert.deepStrictEqual(rows[3], ['7', 'two\nlines', '9']);
+  assert.strictEqual(rows.length, 4);
+});
+
+test('DOB standardizes to MM/DD/YYYY with zero padding', () => {
+  assert.strictEqual(leadCsv.normalizeDob('4/15/1985'), '04/15/1985');
+  assert.strictEqual(leadCsv.normalizeDob('04/15/1985'), '04/15/1985');
+  assert.strictEqual(leadCsv.normalizeDob('1985-04-15'), '04/15/1985');
+  assert.strictEqual(leadCsv.normalizeDob('4-5-1985'), '04/05/1985');
+  assert.strictEqual(leadCsv.normalizeDob('12/31/1999'), '12/31/1999');
+});
+
+test('DOB rejects ambiguous and impossible dates instead of guessing', () => {
+  assert.throws(() => leadCsv.normalizeDob('4/15/85'), /ambiguous/);
+  assert.throws(() => leadCsv.normalizeDob('02/30/1985'), /not a real date/);
+  assert.throws(() => leadCsv.normalizeDob('13/01/1985'), /month 13/);
+  assert.throws(() => leadCsv.normalizeDob(''), /empty/);
+});
+
+test('phone reduces to 10 digits and refuses to truncate', () => {
+  assert.strictEqual(leadCsv.normalizePhone('(551) 332-6220'), '5513326220');
+  assert.strictEqual(leadCsv.normalizePhone('551.332.6220'), '5513326220');
+  assert.strictEqual(leadCsv.normalizePhone('1-551-332-6220'), '5513326220');
+  assert.throws(() => leadCsv.normalizePhone('551332'), /has 6 digits/);
+  assert.throws(() => leadCsv.normalizePhone('12345678901234'), /digits/);
+});
+
+test('gender normalizes to lowercase male/female', () => {
+  assert.strictEqual(leadCsv.normalizeGender('Male'), 'male');
+  assert.strictEqual(leadCsv.normalizeGender('F'), 'female');
+  assert.strictEqual(leadCsv.normalizeGender('WOMAN'), 'female');
+  assert.strictEqual(leadCsv.normalizeGender('Non-Binary'), 'non-binary');
+});
+
+test('test-record detection recognizes reserved domains and test markers', () => {
+  assert.ok(leadCsv.looksLikeTestRecord({ email: 'a@example.com', lastName: 'Smith' }).isTest);
+  assert.ok(leadCsv.looksLikeTestRecord({ email: 'a@sub.example.org', lastName: 'Smith' }).isTest);
+  assert.ok(leadCsv.looksLikeTestRecord({ email: 'a@foo.test', lastName: 'Smith' }).isTest);
+  assert.ok(leadCsv.looksLikeTestRecord({ email: 'real@gmail.com', lastName: 'TestLead' }).isTest);
+  assert.ok(!leadCsv.looksLikeTestRecord({ email: 'real@gmail.com', lastName: 'Smith' }).isTest);
+});
+
+test('datePosted is MM/DD/YYYY', () => {
+  assert.strictEqual(leadCsv.datePosted(new Date(2026, 8, 1)), '09/01/2026');
+  assert.strictEqual(leadCsv.datePosted(new Date(2026, 0, 5)), '01/05/2026');
+});
+
+test('output CSV has the 13 specified headers in order', () => {
+  assert.deepStrictEqual(leadCsv.OUTPUT_HEADERS, [
+    'firstName', 'lastName', 'phone', 'email', 'address', 'city', 'state',
+    'zipCode', 'birthdate', 'gender', 'ipAddress', 'trustedFormURL', 'datePosted',
+  ]);
+});
+
+// --- distributions ---------------------------------------------------------
+
+function sample(n, gender) {
+  const rng = qual.mulberry32(12345);
+  const counts = {};
+  for (let i = 0; i < n; i += 1) {
+    const q = qual.generateQualification(gender, rng);
+    for (const key of ['currentlyInsured', 'married', 'homeowner', 'tobacco', 'creditScore', 'heightInches']) {
+      counts[key] = counts[key] || {};
+      counts[key][q[key]] = (counts[key][q[key]] || 0) + 1;
+    }
+    counts.weights = counts.weights || [];
+    counts.weights.push(Number(q.weightLbs));
+  }
+  return counts;
+}
+
+const N = 40000;
+const near = (actual, expected, tolerance, label) => {
+  assert.ok(Math.abs(actual - expected) <= tolerance,
+    label + ': got ' + actual.toFixed(2) + '%, expected ~' + expected + '% (±' + tolerance + ')');
+};
+
+test('weighted fields match the specified distributions over 40k samples', () => {
+  const c = sample(N, 'male');
+  const pct = (group, key) => ((c[group][key] || 0) / N) * 100;
+  near(pct('currentlyInsured', 'No'), 90, 1, 'currentlyInsured No');
+  near(pct('currentlyInsured', 'Yes'), 10, 1, 'currentlyInsured Yes');
+  near(pct('married', 'No'), 50, 1, 'married No');
+  near(pct('homeowner', 'Yes'), 70, 1, 'homeowner Yes');
+  near(pct('homeowner', 'No'), 30, 1, 'homeowner No');
+  near(pct('tobacco', 'No'), 95, 1, 'tobacco No');
+  near(pct('tobacco', 'Yes'), 5, 1, 'tobacco Yes');
+});
+
+test('credit tiers are uniform over the four values the live form offers', () => {
+  const c = sample(N, 'male');
+  assert.deepStrictEqual(Object.keys(c.creditScore).sort(), [...qual.CREDIT_TIERS].sort());
+  for (const tier of qual.CREDIT_TIERS) {
+    near((c.creditScore[tier] / N) * 100, 25, 1.5, 'credit ' + tier);
+  }
+});
+
+test('male height distribution matches the specification exactly', () => {
+  const c = sample(N, 'male');
+  // 5'10" = 70in at 25%, 6'0" = 72in at 20%, 5'7" = 67in at 2%
+  near((c.heightInches['70'] / N) * 100, 25, 1, "male 5'10\"");
+  near((c.heightInches['72'] / N) * 100, 20, 1, "male 6'0\"");
+  near((c.heightInches['71'] / N) * 100, 20, 1, "male 5'11\"");
+  near((c.heightInches['69'] / N) * 100, 17, 1, "male 5'9\"");
+  near((c.heightInches['68'] / N) * 100, 11, 1, "male 5'8\"");
+  near((c.heightInches['67'] / N) * 100, 2, 1, "male 5'7\"");
+});
+
+test('female height weights sum to 110 and are normalized, preserving every ratio', () => {
+  const total = qual.HEIGHT_FEMALE.reduce((s, [, w]) => s + w, 0);
+  assert.strictEqual(total, 110, 'the specified female weights sum to 110, not 100');
+  const c = sample(N, 'female');
+  // Each specified weight w becomes w/110 of the population.
+  near((c.heightInches['64'] / N) * 100, (15 / 110) * 100, 1, "female 5'4\"");
+  near((c.heightInches['63'] / N) * 100, (15 / 110) * 100, 1, "female 5'3\"");
+  near((c.heightInches['62'] / N) * 100, (12 / 110) * 100, 1, "female 5'2\"");
+  near((c.heightInches['60'] / N) * 100, (8 / 110) * 100, 1, "female 5'0\"");
+  // Ratios from the specification survive normalization: 5'4" is 15/8 of 5'0".
+  const ratio = c.heightInches['64'] / c.heightInches['60'];
+  assert.ok(Math.abs(ratio - 15 / 8) < 0.15, "5'4\":5'0\" ratio was " + ratio.toFixed(3));
+});
+
+test('height is submitted as inches, which is what the live select contains', () => {
+  const q = qual.generateQualification('male', qual.mulberry32(7));
+  assert.ok(/^\d{2}$/.test(q.heightInches), 'heightInches was ' + q.heightInches);
+  const inches = Number(q.heightInches);
+  assert.ok(inches >= 55 && inches <= 83, 'outside the form range: ' + inches);
+  assert.strictEqual(q.heightLabel, Math.floor(inches / 12) + "'" + (inches % 12) + '"');
+});
+
+test('weight stays inside the gendered bounds', () => {
+  const male = sample(4000, 'male').weights;
+  assert.ok(Math.min(...male) >= 155, 'male min was ' + Math.min(...male));
+  assert.ok(Math.max(...male) <= 275, 'male max was ' + Math.max(...male));
+  const female = sample(4000, 'female').weights;
+  assert.ok(Math.min(...female) >= 120, 'female min was ' + Math.min(...female));
+  assert.ok(Math.max(...female) <= 210, 'female max was ' + Math.max(...female));
+  assert.ok(male.every(Number.isInteger), 'weights must be integers');
+});
+
+test('static fields are constant on every record', () => {
+  const rng = qual.mulberry32(99);
+  for (let i = 0; i < 200; i += 1) {
+    const q = qual.generateQualification(i % 2 ? 'male' : 'female', rng);
+    assert.strictEqual(q.military, 'No');
+    assert.strictEqual(q.cancer, 'No');
+    assert.strictEqual(q.heartDisease, 'No');
+    assert.strictEqual(q.coverageAmount, '$25,000 (Funeral Expenses)');
+  }
+});
+
+test('a seed reproduces a batch exactly', () => {
+  const a = qual.generateQualification('female', qual.mulberry32(4242));
+  const b = qual.generateQualification('female', qual.mulberry32(4242));
+  assert.deepStrictEqual(a, b);
+});
+
+test('funnel answers use the live form vocabulary for every hash route', () => {
+  const q = qual.generateQualification('female', qual.mulberry32(3));
+  const a = qual.toFunnelAnswers(q, 'female');
+  assert.strictEqual(a['#/gender'], 'Female');
+  assert.strictEqual(a['#/va-loan'], 'No');
+  assert.strictEqual(a['#/coverage-amount'], '$25,000 (Funeral Expenses)');
+  assert.ok(qual.CREDIT_TIERS.includes(a['#/credit-score']));
+  for (const route of ['#/currently-insured', '#/marriage-status', '#/homeowner', '#/tobacco-use']) {
+    assert.ok(['Yes', 'No'].includes(a[route]), route + ' was ' + a[route]);
+  }
+  // Every route the answer map covers must exist in the runner's own default map.
+  const defaults = core.buildAnswers();
+  assert.deepStrictEqual(Object.keys(a).sort(), Object.keys(defaults).sort());
+});
+
+test('an unspecified gender still gets a height and weight, and is flagged', () => {
+  const q = qual.generateQualification('non-binary', qual.mulberry32(11));
+  assert.ok(/unspecified/.test(q.genderBasis), 'genderBasis was ' + q.genderBasis);
+  assert.ok(Number(q.heightInches) >= 55);
+  assert.ok(Number(q.weightLbs) >= 120 && Number(q.weightLbs) <= 275);
+  assert.strictEqual(qual.toFunnelAnswers(q, 'non-binary')['#/gender'], 'Non-Binary');
+});
+
 console.log('');
 console.log(passed + ' passed, ' + failures.length + ' failed');
 if (failures.length) {

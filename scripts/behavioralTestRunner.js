@@ -281,6 +281,79 @@ async function maybeScroll(page, ctx, reason) {
   }
 }
 
+/**
+ * Drive the weight step's slider to a target value with real key events.
+ *
+ * The weight control is an angularjs-slider: a `<span role="slider">`, not an
+ * `<input>`. readStep only reports input/select/textarea, so this control was
+ * invisible to the runner and weight was never set - every submission took the
+ * slider's default of 160 regardless of what --weight said.
+ *
+ * It is driven from the keyboard rather than by assigning the Angular model,
+ * because the whole point of the harness is that the page receives the same
+ * events a person would produce. The key deltas are measured at runtime instead
+ * of assumed: press once, read aria-valuenow, learn the step. Returns what the
+ * slider actually ended up on, which is what the report records.
+ */
+async function setWeightSlider(page, ctx, targetValue) {
+  const slider = await firstVisible(page.locator('[role=slider]'));
+  if (!slider) return null;
+
+  const read = async () => {
+    const now = await slider.getAttribute('aria-valuenow').catch(() => null);
+    return now === null ? null : Number(now);
+  };
+  const bounds = {
+    min: Number(await slider.getAttribute('aria-valuemin').catch(() => null)),
+    max: Number(await slider.getAttribute('aria-valuemax').catch(() => null)),
+  };
+  const start = await read();
+  if (start === null || !Number.isFinite(start)) return null;
+
+  const target = clamp(Number(targetValue), bounds.min || 0, bounds.max || Number(targetValue));
+  ctx.recorder.record('field-start', {
+    field: 'weight', control: 'slider', valueFrom: start, valueTarget: target,
+    min: bounds.min, max: bounds.max,
+  });
+
+  await slider.click().catch(() => {});
+
+  // Calibrate: what does one arrow press move, and one page press?
+  const calibrate = async (key) => {
+    const before = await read();
+    await page.keyboard.press(key).catch(() => {});
+    await sleep(60);
+    const after = await read();
+    return (after === null || before === null) ? 0 : after - before;
+  };
+  const arrowStep = Math.abs(await calibrate('ArrowRight')) || 1;
+  const pageStep = Math.abs(await calibrate('PageUp')) || arrowStep;
+
+  let current = await read();
+  let presses = 0;
+  const MAX_PRESSES = Number(process.env.BEHAVIOR_SLIDER_MAX_PRESSES || 120);
+  while (current !== null && current !== target && presses < MAX_PRESSES) {
+    const gap = target - current;
+    const usePage = Math.abs(gap) >= pageStep && pageStep > arrowStep;
+    const key = gap > 0
+      ? (usePage ? 'PageUp' : 'ArrowRight')
+      : (usePage ? 'PageDown' : 'ArrowLeft');
+    await page.keyboard.press(key).catch(() => {});
+    presses += 1;
+    await sleep(clamp(charDelayMs(ctx.typingCpm) / 2, 15, 160));
+    const next = await read();
+    if (next === current) break; // hit an end stop; do not spin
+    current = next;
+  }
+
+  ctx.recorder.record('field-complete', {
+    field: 'weight', control: 'slider', valueLength: String(current).length,
+    valueReached: current, valueTarget: target, keyPresses: presses,
+    arrowStep, pageStep,
+  });
+  return current;
+}
+
 async function waitForStepChange(page, fromHash, maxMs) {
   const deadline = Date.now() + maxMs;
   while (Date.now() < deadline) {
@@ -531,7 +604,9 @@ async function runOnce(options) {
       recorder.record('trustedform-unavailable', { timeoutMs: TF_AVAILABLE_TIMEOUT_MS });
     }
 
-    const answers = core.buildAnswers();
+    // The batch harness supplies per-record qualification answers; the CLI
+    // harness falls back to the shared defaults, unchanged.
+    const answers = options.answers || core.buildAnswers();
     let firstInteractionRecorded = false;
     let submitted = false;
 
@@ -546,6 +621,32 @@ async function runOnce(options) {
 
       const plans = s.fields.map((f) => core.planField(f, lead)).filter(Boolean);
       const ordered = profile.order(plans);
+
+      // A step can carry a slider instead of an input (weight). It is not in
+      // `plans`, because planField only maps real form controls.
+      //
+      // The slider is driven only in `type` mode. It has no fill() equivalent -
+      // it is not an input - so the only way to move it is the keyboard, and
+      // doing that in the `fill` arm would emit key events into the very
+      // control arm that exists to show fill() emits none. Skipping it there
+      // also matches what the production runner does, which never set weight
+      // at all because no input existed to fill.
+      if (lead.weight !== undefined && lead.weight !== null) {
+        if (ctx.entryMode === 'fill') {
+          const present = await firstVisible(page.locator('[role=slider]'));
+          if (present) {
+            recorder.record('field-skipped', {
+              field: 'weight', control: 'slider', reason: 'entry-mode=fill emits no key events',
+            });
+          }
+        } else {
+          const reached = await setWeightSlider(page, ctx, lead.weight);
+          if (reached !== null && reached !== undefined) {
+            record.weightSubmitted = reached;
+            ctx.fieldOrder.push('weight');
+          }
+        }
+      }
       const stepsRemaining = Math.max(1, EXPECTED_STEPS - step + 1);
       const budget = stepBudgetMs(ctx, stepsRemaining);
       // Distribute this step's slice of the session budget across its actual
@@ -953,7 +1054,23 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   });
 }
 
-main().catch((error) => {
-  console.error('ERROR: ' + error.message);
-  process.exitCode = 1;
-});
+// Run as a CLI when invoked directly. When required as a module (by the batch
+// CSV harness) nothing executes: runOnce is shared so the batch layer drives
+// this exact proven browser -> proxy -> form -> TrustedForm -> capture path
+// rather than a second copy of it.
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('ERROR: ' + error.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  runOnce,
+  liveBrowsers,
+  COHORT_RANGES,
+  FIELD_ORDER_PROFILES,
+  parseRange,
+  plannedTypingChars,
+  setWeightSlider,
+};
