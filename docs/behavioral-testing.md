@@ -287,6 +287,11 @@ made from this sample size.**
 One run per cohort against the live funnel, from the deployed commit. Same lead,
 same ZIP, each in its own browser, context and IPRoyal sticky session.
 
+> These three runs predate the pause-budget fix described under
+> [Target adherence](#target-adherence) below, which is why each overshoots its
+> target. The proxy, geo, certificate and TrustedForm columns are unaffected by
+> that fix; the duration column is the one it changes.
+
 | cohort | range | target | **actual** | floor | paused | proxy IP | geo | certificate | submit |
 |---|---|---|---|---|---|---|---|---|---|
 | short | 10–35 s | 11.2 s | **22.93 s** | 17.70 s | 5.23 s | 96.240.6.112 | Jersey City, NJ | `3019736906c1…` | success |
@@ -321,12 +326,36 @@ conclusion should be drawn about how any of these signals are scored.
 
 ### Target adherence
 
-Each run overshot its target: +11.7 s (short), +15.5 s (medium), +8.9 s (long).
-The short target of 11.2 s was below the measured floor and was correctly
-flagged `targetUnreachable`; the other two were reachable and still overshot by
-10–20%, because the budget is divided across the steps still expected without
-reserving for the work between pauses. `actualDurationSec` is reported as
-measured and is never adjusted toward the target.
+The three runs above overshot their targets: +11.7 s (short), +15.5 s (medium),
++8.9 s (long). The short target of 11.2 s was below the measured floor and was
+correctly flagged `targetUnreachable`; the other two were reachable and still
+overshot by 10–20%.
+
+The cause was exact rather than noise. The pause budget divided the remaining
+wall clock across the remaining steps **without holding back what those steps
+were still going to spend** on typing, clicks and view swaps, so it allocated
+that time twice. The medium run had 78.6 − 24.98 = 53.62 s of room, paused
+69.11 s, and overshot by exactly the 15.49 s difference.
+
+The budget now reserves both costs before allocating — per-step overhead as the
+running mean of what the steps so far actually cost outside pauses and typing,
+and typing itself projected from the characters still to be entered at the run's
+own baseline speed — and the final review absorbs whatever is left of the
+target, which corrects for whichever way that estimate went. Measured live after
+the fix, one run per cohort:
+
+| cohort | target | actual |
+|---|---|---|
+| short | 32.7 s | 30.95 s |
+| medium | 44.5 s | 44.40 s |
+| long | 151.6 s | 151.28 s |
+
+All three submitted successfully with distinct certificates.
+
+`actualDurationSec` is reported as measured and is **never** adjusted toward the
+target. A session already past its target absorbs nothing at the final review
+and takes the ordinary minimum pause, so the overshoot is closed by budgeting
+earlier, not by trimming the number afterwards.
 
 ## User agent
 
