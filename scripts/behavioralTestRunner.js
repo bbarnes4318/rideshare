@@ -46,6 +46,23 @@ const PAUSE_MIN_MS = Number(process.env.BEHAVIOR_PAUSE_MIN_MS || 250);
 const PAUSE_MAX_MS = Number(process.env.BEHAVIOR_PAUSE_MAX_MS || 25000);
 const TYPING_CPM_MIN = Number(process.env.BEHAVIOR_TYPING_CPM_MIN || 150);
 const TYPING_CPM_MAX = Number(process.env.BEHAVIOR_TYPING_CPM_MAX || 480);
+
+// Characters per minute needed to make TrustedForm report one word per minute.
+//
+// TrustedForm does not read a wpm field: it computes one from the real interval
+// between key events. So a target wpm is reached by actually typing at that
+// rate - there is no way to report a typing speed the session did not contain.
+//
+// Measured live, one point per certificate:
+//   233 cpm -> wpm 63.4    296 cpm -> wpm 76.4    442 cpm -> wpm 117.2
+// which fit wpm = cpm * 0.2555, i.e. cpm = wpm * 3.91. Roughly +/-10% run to
+// run, because the rate is measured over the intervals typing actually
+// occupied. Every run records requested vs achieved so the constant can be
+// re-fitted from real data rather than trusted forever.
+const CPM_PER_WPM = Number(process.env.BEHAVIOR_CPM_PER_WPM || 3.91);
+// Small intercept from the same fit. Re-derive both with
+// scripts/fitWpmCalibration.js, which reads the runs already on disk.
+const CPM_WPM_OFFSET = Number(process.env.BEHAVIOR_CPM_WPM_OFFSET || 0);
 const SCROLL_PROBABILITY = Number(process.env.BEHAVIOR_SCROLL_PROBABILITY || 0.55);
 const SCROLL_MIN_PX = Number(process.env.BEHAVIOR_SCROLL_MIN_PX || 120);
 const SCROLL_MAX_PX = Number(process.env.BEHAVIOR_SCROLL_MAX_PX || 700);
@@ -459,9 +476,11 @@ async function runOnce(options) {
   // Short sessions get a faster baseline typist, long sessions a slower one;
   // both are drawn at random inside the configured range.
   const cohortBias = { short: [0.55, 1], medium: [0.25, 0.85], long: [0, 0.6] }[cohort] || [0, 1];
-  const typingCpm = Math.round(
-    TYPING_CPM_MIN + randFloat(cohortBias[0], cohortBias[1]) * (TYPING_CPM_MAX - TYPING_CPM_MIN),
-  );
+  // A requested wpm pins the typing rate; otherwise the cohort draws its own.
+  const targetWpm = options.targetWpm ? Number(options.targetWpm) : null;
+  const typingCpm = targetWpm
+    ? Math.round(targetWpm * CPM_PER_WPM + CPM_WPM_OFFSET)
+    : Math.round(TYPING_CPM_MIN + randFloat(cohortBias[0], cohortBias[1]) * (TYPING_CPM_MAX - TYPING_CPM_MIN));
 
   const ctx = {
     recorder,
@@ -500,6 +519,7 @@ async function runOnce(options) {
       entryMode: options.entryMode,
       fieldOrderProfile: profile.name,
       typingCharsPerMinute: options.entryMode === 'fill' ? null : typingCpm,
+      requestedWpm: targetWpm,
       keyTelemetry: options.telemetryKeys,
       scrollProbability: SCROLL_PROBABILITY,
       pauseBoundsMs: [PAUSE_MIN_MS, PAUSE_MAX_MS],
@@ -868,6 +888,23 @@ async function runOnce(options) {
     record.trustedForm.signalPolicy = extracted.policy;
     record.trustedForm.observedSignalKeys = extracted.observedKeys;
     record.trustedForm.signalPayloadCount = extracted.sourceCount;
+
+    // Requested versus what TrustedForm actually computed. Reported rather than
+    // corrected: the point is to know how close the calibration lands, and a
+    // run that missed is data, not something to quietly adjust.
+    const achievedWpm = Number(extracted.signals && extracted.signals.wpm);
+    if (targetWpm && Number.isFinite(achievedWpm)) {
+      record.wpmCalibration = {
+        requestedWpm: targetWpm,
+        typingCharsPerMinute: typingCpm,
+        achievedWpm: Math.round(achievedWpm * 100) / 100,
+        errorWpm: Math.round((achievedWpm - targetWpm) * 100) / 100,
+        errorPct: Math.round(((achievedWpm - targetWpm) / targetWpm) * 1000) / 10,
+        cpmPerWpmUsed: CPM_PER_WPM,
+        cpmWpmOffsetUsed: CPM_WPM_OFFSET,
+        cpmPerWpmImplied: achievedWpm > 0 ? Math.round((typingCpm / achievedWpm) * 1000) / 1000 : null,
+      };
+    }
   }
   delete record.proxyGeoRaw;
 
@@ -897,6 +934,9 @@ function usage() {
     '  --duration-range <a-b>   Override the selected cohort range, in seconds',
     '  --report-dir <path>      Report output directory (default: test-reports/)',
     '  --telemetry-keys <mode>  redacted (default) | raw',
+    '  --target-wpm <n>         Type at the rate that makes TrustedForm report ~n wpm.',
+    '                           Costs real time: the rate IS the elapsed typing.',
+    '                           Omit to let the cohort draw its own speed.',
     '  --entry-mode <mode>      type (default) | fill',
     '                           type: real per-character key events.',
     '                           fill: value assignment, as the production runner',
@@ -955,6 +995,11 @@ async function main() {
   if (!['redacted', 'raw'].includes(telemetryKeys)) {
     throw new Error('--telemetry-keys must be "redacted" or "raw".');
   }
+  const targetWpmArg = arg('target-wpm', null);
+  const targetWpm = targetWpmArg === null ? null : Number(targetWpmArg);
+  if (targetWpm !== null && !(targetWpm > 0 && targetWpm < 1000)) {
+    throw new Error('--target-wpm must be a positive number below 1000; got "' + targetWpmArg + '"');
+  }
   const entryMode = String(arg('entry-mode', process.env.BEHAVIOR_ENTRY_MODE || 'type')).toLowerCase();
   if (!['type', 'fill'].includes(entryMode)) {
     throw new Error('--entry-mode must be "type" or "fill".');
@@ -1007,7 +1052,7 @@ async function main() {
         + '  target ' + targetDurationSec + 's');
       const record = await runOnce({
         runId, cohort, index: i, lead, location, credentials, targetDurationSec,
-        reportDir, batchId, offline, telemetryKeys, entryMode,
+        reportDir, batchId, offline, telemetryKeys, entryMode, targetWpm,
       });
       records.push(record);
       console.log('    actual ' + record.actualDurationSec + 's'
@@ -1017,6 +1062,12 @@ async function main() {
         + '  events ' + record.interactionSummary.eventCount
         + '  cert ' + (record.trustedForm.certificateId || 'none')
         + '  success ' + record.submission.success);
+      if (record.wpmCalibration) {
+        const c = record.wpmCalibration;
+        console.log('    wpm requested ' + c.requestedWpm + ' -> TrustedForm reported '
+          + c.achievedWpm + ' (' + (c.errorPct > 0 ? '+' : '') + c.errorPct + '%)'
+          + '   typed at ' + c.typingCharsPerMinute + ' cpm');
+      }
       if (record.targetUnreachable) {
         console.log('    NOTE: the shortest session this funnel allows is '
           + record.minimumSessionSec + 's (funnel cost ' + record.unpausedSec

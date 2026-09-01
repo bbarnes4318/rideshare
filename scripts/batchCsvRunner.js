@@ -73,6 +73,7 @@ function usage() {
     '  --seed <n>                 Seed the qualification generator for reproducibility',
     '  --telemetry-keys <mode>    redacted (default) | raw',
     '  --entry-mode <mode>        type (default) | fill',
+    '  --target-wpm <n>           Type at the rate that makes TrustedForm report ~n wpm.',
     '  --dry-run                  Sanitize, generate and report. Submits nothing.',
     '  --offline-selftest         Drive the loopback mock funnel. No proxy, no live submit.',
     '  --allow-non-test-records   Permit rows that do not look like test records.',
@@ -128,6 +129,11 @@ async function main() {
   const entryMode = String(arg('entry-mode', 'type')).toLowerCase();
   if (!['type', 'fill'].includes(entryMode)) {
     throw new Error('--entry-mode must be "type" or "fill"');
+  }
+  const targetWpmArg = arg('target-wpm', null);
+  const targetWpm = targetWpmArg === null ? null : Number(targetWpmArg);
+  if (targetWpm !== null && !(targetWpm > 0 && targetWpm < 1000)) {
+    throw new Error('--target-wpm must be a positive number below 1000');
   }
   const dryRun = hasFlag('dry-run');
   const allowNonTest = hasFlag('allow-non-test-records');
@@ -308,7 +314,7 @@ async function main() {
     try {
       record = await behavioral.runOnce({
         runId, cohort, index: i + 1, lead, location, credentials, targetDurationSec,
-        reportDir, batchId, offline, telemetryKeys, entryMode, answers,
+        reportDir, batchId, offline, telemetryKeys, entryMode, answers, targetWpm,
       });
     } catch (error) {
       console.log('    ERROR: ' + error.message);
