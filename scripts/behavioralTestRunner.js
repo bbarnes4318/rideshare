@@ -49,6 +49,9 @@ const TYPING_CPM_MAX = Number(process.env.BEHAVIOR_TYPING_CPM_MAX || 480);
 const SCROLL_PROBABILITY = Number(process.env.BEHAVIOR_SCROLL_PROBABILITY || 0.55);
 const SCROLL_MIN_PX = Number(process.env.BEHAVIOR_SCROLL_MIN_PX || 120);
 const SCROLL_MAX_PX = Number(process.env.BEHAVIOR_SCROLL_MAX_PX || 700);
+// Below this much scrollable overflow a step is treated as unscrollable, so the
+// timeline never records a wheel burst that could not have moved anything.
+const SCROLL_MIN_MOVE_PX = Number(process.env.BEHAVIOR_SCROLL_MIN_MOVE_PX || 40);
 const STEP_SETTLE_MAX_MS = Number(process.env.BEHAVIOR_STEP_SETTLE_MAX_MS || 10000);
 const RESPONSE_WAIT_MS = Number(process.env.BEHAVIOR_RESPONSE_WAIT_MS || 15000);
 const TF_AVAILABLE_TIMEOUT_MS = Number(process.env.BEHAVIOR_TF_TIMEOUT_MS || 30000);
@@ -201,17 +204,45 @@ async function selectValue(page, plan, ctx) {
   });
 }
 
+/**
+ * Bounded scrolling, only where the step can actually scroll.
+ *
+ * Measured on the live funnel: 13 of its 16 steps fit the viewport, so wheel
+ * events there move nothing. Scrolling regardless filled the timeline with
+ * scroll-actions whose scrollPosition never changed, which reads as scrolling
+ * that did not happen. The skip is recorded so an unscrollable step is explicit
+ * in the report rather than silently absent, and each burst records how far the
+ * page actually moved.
+ */
 async function maybeScroll(page, ctx, reason) {
   if (Math.random() > SCROLL_PROBABILITY) return;
+
+  const metrics = await page.evaluate(() => ({
+    scrollHeight: document.documentElement.scrollHeight,
+    innerHeight: window.innerHeight,
+  })).catch(() => null);
+  const maxScroll = metrics ? Math.max(0, metrics.scrollHeight - metrics.innerHeight) : 0;
+  if (maxScroll < SCROLL_MIN_MOVE_PX) {
+    ctx.recorder.record('scroll-skipped', { reason, maxScroll, cause: 'step-not-scrollable' });
+    return;
+  }
+
   const bursts = randInt(1, 2);
   for (let i = 0; i < bursts; i += 1) {
-    const down = Math.random() < 0.75;
-    const amount = randInt(SCROLL_MIN_PX, SCROLL_MAX_PX);
+    const before = await page.evaluate(() => window.scrollY).catch(() => 0);
+    // Turn around near the bottom instead of wheeling against the end of the page.
+    const down = before > maxScroll * 0.6 ? false : Math.random() < 0.75;
+    const amount = randInt(SCROLL_MIN_PX, Math.max(SCROLL_MIN_PX, Math.min(SCROLL_MAX_PX, maxScroll)));
     await page.mouse.wheel(0, down ? amount : -amount).catch(() => {});
     await sleep(randInt(120, 420));
     const scrollPosition = await page.evaluate(() => window.scrollY).catch(() => null);
     ctx.recorder.record('scroll-action', {
-      direction: down ? 'down' : 'up', amount, scrollPosition, reason,
+      direction: down ? 'down' : 'up',
+      amount,
+      scrollPosition,
+      maxScroll,
+      movedPx: scrollPosition === null ? null : scrollPosition - before,
+      reason,
     });
   }
 }
@@ -267,9 +298,16 @@ async function firstVisible(locator) {
   return null;
 }
 
-/** Remaining wall-clock budget, spread over the steps still expected. */
+/**
+ * Remaining wall-clock budget, spread over the steps still expected.
+ *
+ * Measured against the session clock (funnel page load), not the run clock.
+ * The funnel's redirect chain costs ~9s before its page exists, and charging
+ * that to the session target left short cohorts with almost no budget, so every
+ * pause collapsed to its minimum and the target was reported unreachable.
+ */
 function stepBudgetMs(ctx, stepsRemaining) {
-  const remaining = ctx.targetMs - SUBMIT_RESERVE_MS - ctx.recorder.elapsed();
+  const remaining = ctx.targetMs - SUBMIT_RESERVE_MS - ctx.sessionElapsed();
   if (remaining <= 0) return 0;
   const mean = remaining / Math.max(1, stepsRemaining);
   return clamp(mean * randFloat(0.45, 1.55), PAUSE_MIN_MS, Math.min(PAUSE_MAX_MS, remaining));
@@ -302,6 +340,11 @@ async function runOnce(options) {
     typingCpm,
     entryMode: options.entryMode,
     fieldOrder: [],
+    // Offset of the funnel page load within the run timeline. The duration
+    // target applies to the session on the form, so the budget is spent
+    // against this clock rather than the run's.
+    sessionStartMs: 0,
+    sessionElapsed() { return Math.max(0, recorder.elapsed() - ctx.sessionStartMs); },
   };
 
   const record = {
@@ -405,6 +448,9 @@ async function runOnce(options) {
     recorder.record('navigation-start', { url: core.TARGET_URL });
     await page.goto(core.TARGET_URL, { waitUntil: 'networkidle', timeout: 90000 });
     recorder.record('page-load', { url: page.url() });
+    // The session clock starts here: the funnel page now exists, and so does
+    // TrustedForm's script on it.
+    ctx.sessionStartMs = recorder.elapsed();
     record.browser.userAgent = await page.evaluate(() => navigator.userAgent).catch(() => null);
 
     // TrustedForm availability, measured rather than assumed.
@@ -505,7 +551,6 @@ async function runOnce(options) {
         record.submission.finalUrl = finalUrl;
         record.submission.response = body.slice(0, 260);
         record.submission.success = !stillOnForm;
-        record.actualDurationSec = Math.round(recorder.elapsed() / 10) / 100;
         await recorder.drain(page);
         if (stillOnForm) throw new Error('Funnel did not advance past the contact step: ' + record.submission.response);
         break;
@@ -557,8 +602,37 @@ async function runOnce(options) {
     }
   }
 
-  if (record.actualDurationSec === null && recorder.t0 !== null) {
-    record.actualDurationSec = Math.round(recorder.elapsed() / 10) / 100;
+  // The session duration is page load -> submit click, which is the window
+  // TrustedForm certifies. Measured, not assumed, from the timeline itself.
+  //
+  // It deliberately excludes two spans that are not part of the session on the
+  // form, and which are reported separately instead of being folded in:
+  //   * navigationSec - the funnel's own multi-redirect load, before its page
+  //     (and TrustedForm's script) exists. Measured at 9.2s on the live funnel.
+  //   * responseWaitSec - waiting for the post-submit navigation, which happens
+  //     after the certificate is already issued.
+  // Counting either inflated the reported session by ~14s and made every short
+  // cohort target look unreachable when it was not.
+  const firstAt = (type) => {
+    const e = recorder.events.find((x) => x.eventType === type);
+    return e ? e.elapsedMs : null;
+  };
+  const loadAt = firstAt('page-load');
+  const submitAt = firstAt('submit');
+  const responseAt = firstAt('response');
+
+  record.navigationSec = loadAt === null ? null : Math.round(loadAt / 10) / 100;
+  record.responseWaitSec = (submitAt === null || responseAt === null)
+    ? null
+    : Math.round((responseAt - submitAt) / 10) / 100;
+  if (loadAt !== null && submitAt !== null) {
+    record.actualDurationSec = Math.round((submitAt - loadAt) / 10) / 100;
+  } else if (record.actualDurationSec === null && recorder.t0 !== null) {
+    // Never reached Submit: fall back to whatever session did elapse.
+    const end = responseAt === null ? recorder.elapsed() : responseAt;
+    record.actualDurationSec = loadAt === null
+      ? Math.round(end / 10) / 100
+      : Math.round((end - loadAt) / 10) / 100;
   }
   record.totalRunSec = Math.round((Date.now() - wallStart) / 10) / 100;
   record.finishedAt = new Date().toISOString();
@@ -592,17 +666,25 @@ async function runOnce(options) {
     const capturesDir = path.join(reportDir, 'captures');
     fs.mkdirSync(capturesDir, { recursive: true });
     const capturePath = path.join(capturesDir, runId + '.json');
+
+    // Snapshot once, then use that same snapshot for both the capture file and
+    // the signal extraction. The listeners push asynchronously (a response body
+    // is read with an await), so reading the live array twice leaves a window in
+    // which a late TrustedForm event lands between the two, and the reported
+    // signal would not be supported by the saved capture.
+    const captureSnapshot = capturedEvents.slice();
+
     core.writeCapture(capturePath, {
       certUrl: record.trustedForm.certificateUrl,
       observedIp: record.proxy.ip,
       observedGeo: record.proxyGeoRaw || null,
       finalUrl: record.submission.finalUrl,
-      events: capturedEvents,
+      events: captureSnapshot,
     });
     record.trustedForm.captureFile = capturePath;
-    record.trustedForm.captureEventCount = capturedEvents.length;
+    record.trustedForm.captureEventCount = captureSnapshot.length;
 
-    const extracted = reporting.extractTrustedFormSignals(capturedEvents);
+    const extracted = reporting.extractTrustedFormSignals(captureSnapshot);
     record.trustedForm.signals = extracted.signals;
     record.trustedForm.signalSeries = extracted.series;
     record.trustedForm.signalPolicy = extracted.policy;

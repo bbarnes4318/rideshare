@@ -104,11 +104,32 @@ that ran short grows them.
 Every run reports:
 
 - `targetDurationSec` — what was drawn
-- `actualDurationSec` — what actually happened, page load → submit response
-- `pausedSec` — how much of that was deliberate waiting
+- `actualDurationSec` — the session on the form: funnel page load → Submit click
+- `navigationSec` — the funnel's redirect chain, before its page existed
+- `responseWaitSec` — waiting for the post-submit navigation
+- `pausedSec` — how much of the session was deliberate waiting
 - `unpausedSec` — the funnel's own cost (typing, clicks, view swaps, network)
 - `minimumSessionSec` — `unpausedSec` plus the minimum pause at each interaction
 - `targetUnreachable` — true when `minimumSessionSec` exceeded the target
+
+### What the session window is, and what it is not
+
+`actualDurationSec` is measured from the **funnel page load to the Submit
+click**, because that is the window TrustedForm certifies. Two spans that are
+not part of the session on the form are measured and reported separately rather
+than folded in:
+
+- the funnel's own multi-redirect load, which measured **9.2 s** live and
+  happens before its page — and TrustedForm's script — exists at all;
+- the post-submit navigation wait, which happens after the certificate has
+  already been issued.
+
+Both the reported duration and the pause budget run on this session clock.
+Charging the 9.2 s navigation against the session target inflated the reported
+session by roughly 14 s, left short-cohort runs with almost no budget so every
+pause collapsed to its minimum, and made reachable targets report as
+unreachable. Measured on the same live run: 37.49 s reported against a 20 s
+target became 23.60 s once the window was corrected.
 
 **The actual duration is the number that matters, and it is never adjusted to
 match the target.** A cohort range whose upper bound is below
@@ -159,8 +180,15 @@ name and the actual sequence of fields touched are both recorded.
 ## Scrolling
 
 Bounded: 0–2 wheel bursts per step, each 120–700 px, roughly 3:1 down to up.
-Each burst records direction, amount and the resulting `scrollY`; the page-side
-listener records the observed scroll independently.
+Each burst records direction, amount, the resulting `scrollY` and `movedPx`;
+the page-side listener records the observed scroll independently.
+
+Scrolling only happens where the step can actually scroll. Measured live, 13 of
+the funnel's 16 steps fit the viewport, so wheel events there move nothing:
+sending them anyway filled the timeline with scroll-actions whose
+`scrollPosition` never changed, which reads as scrolling that did not happen.
+A step with less than 40 px of overflow records `scroll-skipped` instead, so an
+unscrollable step is explicit in the report rather than silently absent.
 
 ## TrustedForm capture and signal extraction
 
@@ -217,11 +245,42 @@ timestamps.
 **What this does and does not establish.** It establishes that the zero is a
 property of how the automation entered the values, not evidence that TrustedForm
 failed to observe the session. It does **not** establish anything about
-TrustedForm's internal implementation, which is not inspectable from here, and it
-was measured against a local stand-in listener rather than TrustedForm itself.
-Confirming it against real TrustedForm requires running both arms through the
-proxy against the live funnel and comparing the resulting certificates. That is
-what the harness is for.
+TrustedForm's internal implementation, which is not inspectable from here.
+
+### Confirmed against real TrustedForm
+
+The offline numbers above came from a local stand-in listener. The same
+comparison has since been run through the IPRoyal proxy against the live funnel,
+and the values below are read out of the real `/certs/<id>/update` payloads in
+each run's own capture file — TrustedForm's own numbers, not ours:
+
+| entry method | typing baseline | TrustedForm `wpm` | TrustedForm `kpm` | certificate |
+|---|---|---|---|---|
+| `fill()` (production runner) | — | **0** | **0** | `87e7cb57…` |
+| `keyboard.type()` | ~370 cpm | 84.31 | 416.76 | `3601087b…` |
+| `keyboard.type()` | ~830 cpm | 210.94 | 1100.17 | `633ce6bf…` |
+| `keyboard.type()` | ~1330 cpm | 325.07 | 1577.67 | `d2e7367d…` |
+
+The two fastest rows were rehearsal runs that stopped before Submit, so they
+generated a certificate but no lead; the certificate and its `/update` payload
+are unaffected by that.
+
+Two things follow, both measured rather than assumed:
+
+1. The zero was real and correctly reported. TrustedForm counted the key events
+   the session actually contained, and `fill()` produces none.
+2. TrustedForm's `kpm` tracks the **actual inter-key interval**, measured over
+   the intervals in which typing occurred rather than over the whole session,
+   and `wpm ≈ kpm / 5` (the conventional five-character word) across all three
+   typed rows.
+
+**The two fastest rows are faster than any human types.** That is recorded as a
+finding, not tuned away: at 60 ms per character the harness reports a typing rate
+no person produces, and TrustedForm reports it faithfully. Only the ~370 cpm row
+(≈74 wpm) is a rate a fast human touch-typist could produce.
+
+Three cohorts is a demonstration, not a controlled study — **no causal claim is
+made from this sample size.**
 
 ## User agent
 
@@ -234,6 +293,28 @@ display; the report will show whatever that browser reports.
 Changing the user-agent string would not make automated interaction human, and
 this harness makes no such claim. Randomized timing is a variable being measured,
 not a claim about defeating any control.
+
+### The user agent is not the strongest automation signal in the capture
+
+Decoding a live capture shows the user-agent string is not what TrustedForm is
+relying on. Its payloads carry, among others:
+
+| signal | observed value |
+|---|---|
+| `nav_webdriver` | `true` |
+| `browser_width` × `browser_height` | 1280 × 720 |
+| `screen_width` × `screen_height` | 1280 × 720 |
+| `nav_max_touch_points` | 0 |
+| `nav_hw_conc` | 4 |
+| `nav_dev_mem` | 8 |
+| `win_dpr` | 1 |
+| `mobile` | `false` |
+
+`navigator.webdriver` is `true` in every run, which is exactly what that property
+is specified to report for a browser under automation. It is present in the
+known-good NJ capture too, alongside the certificate that run produced. These
+values are recorded as observed; the harness does not alter any of them, and no
+attempt is made to suppress or falsify this or any other signal.
 
 ## Reports
 
