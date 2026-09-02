@@ -44,6 +44,7 @@ const leadCsv = require('./lib/leadCsv');
 const pool = require('./lib/pool');
 const qualification = require('./lib/qualification');
 const reporting = require('./lib/reporting');
+const submissionStore = require('./lib/submissionStore');
 
 // Loaded lazily, inside the submitting path only. Requiring it pulls in
 // playwright-core, and --help and --dry-run have no business needing a browser
@@ -311,6 +312,11 @@ async function main() {
   const slots = new Array(prepared.length).fill(null);  // one per input row, input order
   const inFlight = new Map();                           // index -> name, for the progress file
 
+  // Outcomes of storing accepted rows in the submissions collection, summarized
+  // at the end. A batch used to produce a CSV and nothing an operator could see
+  // in the dashboard; this is how many rows made it to that page.
+  const stored = { saved: 0, duplicate: 0, skipped: 0, failed: 0 };
+
   // Resolved before the run, not after it. A 383-row batch runs for a long
   // time, and holding every accepted row in memory until the end meant an
   // interrupted run - or simply one still in progress - had no CSV at all,
@@ -476,6 +482,24 @@ async function main() {
         certificateStillIssued: !!cert,
       },
     };
+
+    // Store the accepted lead where the dashboard can actually see it. The
+    // business CSV is the file an operator downloads; this is the same row on
+    // the Submissions page, which until now never received a batch row at all.
+    // Accepted rows only, matching the CSV rule above, so the two agree.
+    //
+    // Never fatal: the funnel has already taken this submission and issued its
+    // certificate, and failing the row now would lose the record of a lead that
+    // exists. The outcome is counted and reported in the summary instead.
+    if (accepted && !offline) {
+      const outcome = await submissionStore.saveBatchRow({ batchId, row, quals, record });
+      stored[outcome] = (stored[outcome] || 0) + 1;
+      if (outcome === 'failed') {
+        console.log(prefix + '    NOT on the Submissions page (see warning above); '
+          + 'the row is still in the CSV and the forensic record.');
+      }
+    }
+
     inFlight.delete(i);
     return record;
   }
@@ -508,6 +532,10 @@ async function main() {
   console.log('TrustedForm certificates: ' + certs + '/' + records.length);
   console.log('rows rejected at input:   ' + errors.length);
   console.log('rows in the final CSV:    ' + outputRows.length);
+  console.log('rows on Submissions page: ' + stored.saved
+    + (stored.duplicate ? ' (' + stored.duplicate + ' already stored)' : '')
+    + (stored.skipped ? ' - ' + stored.skipped + ' skipped, no database configured' : '')
+    + (stored.failed ? ' - ' + stored.failed + ' FAILED to store, see the log' : ''));
   if (omitted.length) {
     console.log('');
     console.log('OMITTED FROM THE FINAL CSV (' + omitted.length + ') - the funnel did not accept these:');
@@ -558,7 +586,14 @@ async function main() {
   if (submitted !== records.length) process.exitCode = 1;
 }
 
-main().catch((error) => {
-  console.error('ERROR: ' + error.message);
-  process.exitCode = 1;
-});
+// An open Mongo connection keeps the event loop alive, and this process must
+// actually exit: routes/batch.js clears the one-batch-at-a-time lock and writes
+// the terminal phase from the child's exit. Closed on every path, including the
+// failure one, so a batch that throws still finishes as far as the UI is
+// concerned.
+main()
+  .catch((error) => {
+    console.error('ERROR: ' + error.message);
+    process.exitCode = 1;
+  })
+  .finally(() => submissionStore.disconnect());

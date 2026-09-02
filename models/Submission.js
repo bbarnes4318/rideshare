@@ -162,7 +162,19 @@ const submissionSchema = new mongoose.Schema({
   },
   campaign: String,
   offer_url: String,
-  
+
+  // Where the record came from. A visitor posting index.html to /api-proxy/ is
+  // 'form'; a row the batch CSV harness submitted to the production funnel is
+  // 'batch' and carries the batch and line it came from, so a synthetic test
+  // lead is never mistaken for one a real visitor left.
+  source: {
+    type: String,
+    enum: ['form', 'batch'],
+    default: 'form'
+  },
+  batch_id: String,
+  batch_row: Number,
+
   // Submission tracking
   submission_date: {
     type: Date,
@@ -210,6 +222,17 @@ submissionSchema.index({ status: 1 });
 submissionSchema.index({ 'geolocation.country': 1 });
 submissionSchema.index({ 'geolocation.region': 1 });
 submissionSchema.index({ quality_score: -1 });
+submissionSchema.index({ source: 1, submission_date: -1 });
+
+// One document per batch row. This is what makes storing a row safe to repeat:
+// the runner writing a row it already wrote, or a backfill re-run over a batch
+// that is already in the collection, is rejected as a duplicate instead of
+// producing a second copy of the same lead. Partial rather than sparse so it
+// applies only to batch rows; organic form posts have no batch_id at all.
+submissionSchema.index(
+  { batch_id: 1, batch_row: 1 },
+  { unique: true, partialFilterExpression: { batch_id: { $type: 'string' } } }
+);
 
 // Virtual for full name
 submissionSchema.virtual('fullName').get(function() {
@@ -245,7 +268,10 @@ submissionSchema.methods.calculateQualityScore = function() {
   if (this.gender) score += 10;
   
   // Technical quality (30 points)
-  if (this.trusted_form_cert_url) score += 15;
+  // A certificate only counts if it is one. The field is required, so a record
+  // whose run produced no certificate carries a marker instead of a URL, and
+  // scoring that would make an uncertified lead look like a certified one.
+  if (/^https?:\/\//.test(this.trusted_form_cert_url || '')) score += 15;
   if (this.geolocation && this.geolocation.country) score += 10;
   if (this.user_agent && !this.user_agent.includes('bot')) score += 5;
   

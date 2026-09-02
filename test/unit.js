@@ -591,6 +591,99 @@ testAsync('starts are staggered, so N browsers do not open the funnel on one tic
   assert.ok(startedAt[2] >= 70, 'third start was at ' + startedAt[2] + 'ms');
 });
 
+console.log('');
+console.log('submissionStore');
+
+const submissionStore = require('../scripts/lib/submissionStore');
+
+// A completed row exactly as the runner hands it over: the source row from the
+// CSV, the qualification values that were actually submitted, and the record
+// the browser run produced.
+function completedRow() {
+  return {
+    batchId: 'batch-1',
+    row: {
+      lineNumber: 7,
+      firstName: 'Dana', lastName: 'TestLead', gender: 'Female',
+      address: '88 Morgan St', city: 'Jersey City', state: 'nj', zip: '07302',
+      phone: '(551) 332-6220', email: 'Dana.TestLead@Example.com', dob: '07/09/1982',
+    },
+    quals: {
+      currentlyInsured: 'No', married: 'Yes', homeowner: 'No', military: 'No',
+      tobacco: 'No', cancer: 'No', heartDisease: 'No',
+      creditScore: '700-640 Good', coverageAmount: '$25,000 (Funeral Expenses)',
+      heightInches: '65', weightLbs: '150',
+    },
+    record: {
+      proxy: { ip: '73.10.4.9', country: 'United States', state: 'New Jersey', city: 'Jersey City', isp: 'Comcast' },
+      trustedForm: { certificateUrl: 'https://cert.trustedform.com/abc123' },
+      submission: { success: true, finalUrl: 'https://example.test/thanks', timestamp: '2026-09-02T10:00:00.000Z' },
+      browser: { userAgent: 'Mozilla/5.0 (Windows NT 10.0)' },
+      leadLocation: { city: 'Jersey City', state: 'NJ', stateName: 'NEW JERSEY' },
+      actualDurationSec: 142,
+      weightSubmitted: 152,
+    },
+  };
+}
+
+test('toSubmissionData maps a completed row onto the submissions schema', () => {
+  const d = submissionStore.toSubmissionData(completedRow());
+  assert.strictEqual(d.fname, 'Dana');
+  assert.strictEqual(d.email, 'dana.testlead@example.com');
+  assert.strictEqual(d.phone, '5513326220', 'phone is stored as digits, as the form handler stores it');
+  assert.strictEqual(d.state, 'NJ');
+  assert.strictEqual(d.gender, 'Female');
+  assert.strictEqual(d.date_of_birth.getFullYear(), 1982);
+  assert.strictEqual(d.date_of_birth.getMonth(), 6, 'July is month 6');
+  assert.strictEqual(d.date_of_birth.getDate(), 9);
+  assert.strictEqual(d.source, 'batch');
+  assert.strictEqual(d.batch_id, 'batch-1');
+  assert.strictEqual(d.batch_row, 7);
+});
+
+test('toSubmissionData carries the answers the run actually submitted', () => {
+  const d = submissionStore.toSubmissionData(completedRow());
+  assert.strictEqual(d.currently_insured, 'No');
+  assert.strictEqual(d.marital, 'Yes');
+  assert.strictEqual(d.credit_rating, 'good', 'the schema stores the grade, not the tier label');
+  assert.strictEqual(d.coverage_amount, '$25,000 (Funeral Expenses)');
+  assert.strictEqual(d.height, 65);
+  assert.strictEqual(d.weight, 152, 'the weight the form ended up with wins over the generated one');
+});
+
+test('toSubmissionData records what was observed, and marks what was not', () => {
+  const d = submissionStore.toSubmissionData(completedRow());
+  assert.strictEqual(d.ip_address, '73.10.4.9');
+  assert.strictEqual(d.trusted_form_cert_url, 'https://cert.trustedform.com/abc123');
+  assert.strictEqual(d.geolocation.city, 'Jersey City');
+  assert.strictEqual(d.time_on_page, 142);
+
+  // A run can finish without an IP, a certificate or a user agent, and all
+  // three are required by the schema. They are marked, never invented.
+  const bare = completedRow();
+  bare.record.proxy = {};
+  bare.record.trustedForm = {};
+  bare.record.browser = {};
+  const b = submissionStore.toSubmissionData(bare);
+  assert.strictEqual(b.ip_address, 'unknown');
+  assert.strictEqual(b.trusted_form_cert_url, 'unknown');
+  assert.strictEqual(b.user_agent, 'unknown');
+  assert.strictEqual(b.geolocation.region, 'NEW JERSEY', 'falls back to the lead location');
+});
+
+test('toSubmissionData leaves unknown qualification answers unset', () => {
+  // What the leads.csv backfill path hands over: a real lead, but no record of
+  // which answers the run gave. Guessing them would put answers on the page
+  // that no run ever submitted.
+  const csvOnly = completedRow();
+  csvOnly.quals = null;
+  const d = submissionStore.toSubmissionData(csvOnly);
+  assert.strictEqual(d.currently_insured, undefined);
+  assert.strictEqual(d.credit_rating, undefined);
+  assert.strictEqual(d.height, undefined);
+  assert.strictEqual(d.fname, 'Dana', 'the lead itself is still stored');
+});
+
 // ---------------------------------------------------------------------------
 // Drain the queued async cases, then report. Everything above this line has
 // already run synchronously, exactly as it did before the queue existed.

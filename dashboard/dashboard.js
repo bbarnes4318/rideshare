@@ -475,13 +475,30 @@ class RideshareDashboard {
       const scoreColor =
         score >= 70 ? "#16a34a" : score >= 40 ? "#f59e0b" : "#dc2626";
 
-      const trustedFormBadge = submission.trusted_form_cert_url
-        ? `<a href="${submission.trusted_form_cert_url}" target="_blank" title="View TrustedForm certificate" class="text-green-600 hover:text-green-800 font-semibold text-xs whitespace-nowrap">✓ <span class="cert-word">Verified</span></a>`
+      // A record can carry "unknown" where a certificate URL would go: the run
+      // finished but never produced one, and the field is required. Only link
+      // something that is actually a URL, or the badge offers a dead link.
+      const certUrl = /^https?:\/\//.test(submission.trusted_form_cert_url || "")
+        ? submission.trusted_form_cert_url
+        : null;
+      const trustedFormBadge = certUrl
+        ? `<a href="${certUrl}" target="_blank" title="View TrustedForm certificate" class="text-green-600 hover:text-green-800 font-semibold text-xs whitespace-nowrap">✓ <span class="cert-word">Verified</span></a>`
         : '<span class="text-red-500 text-xs whitespace-nowrap" title="No TrustedForm certificate">✗ <span class="cert-word">No cert</span></span>';
+
+      // Batch rows are leads the CSV harness submitted to the funnel, not ones
+      // a visitor left. They belong on this page, but an operator has to be
+      // able to tell them apart at a glance.
+      const sourceBadge =
+        submission.source === "batch"
+          ? `<span class="text-xs text-gray-500 whitespace-nowrap" title="Submitted by the batch CSV harness${submission.batch_id ? " (" + submission.batch_id + ")" : ""}">batch</span>`
+          : "";
 
       row.innerHTML = `
                 <td data-label="Name">
-                    <div class="cell-truncate font-medium" title="${name}">${name}</div>
+                    <div class="cell-stack">
+                        <div class="cell-truncate font-medium" title="${name}">${name}</div>
+                        ${sourceBadge}
+                    </div>
                 </td>
                 <td data-label="Contact">
                     <div class="cell-stack">

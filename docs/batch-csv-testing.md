@@ -251,6 +251,46 @@ IP, the field is left empty rather than filled in.
 The CSV is the convenient business output; the JSON and captures are the QA and
 forensic record.
 
+### 3. The dashboard's Submissions page
+
+Every row the funnel accepts is also stored in the `submissions` collection as
+the run settles, so it appears on the dashboard's Submissions page alongside
+organic form posts. Rows the funnel rejected are not stored, which is the rule
+the business CSV already follows, so the page and the CSV never disagree about
+which leads exist.
+
+Batch rows carry `source: 'batch'` and the batch id they came from, and the page
+shows them with a small `batch` marker. `GET /api/submissions?source=batch` (or
+`?source=form`) filters to one or the other.
+
+They are stored with what the run observed - the egress IP, the certificate, the
+geolocation, the elapsed time and the qualification answers actually submitted.
+Where a run produced no IP, certificate or user agent, the field reads `unknown`
+rather than a plausible-looking value, and a lead with no real certificate does
+not earn the certificate's share of the quality score.
+
+Storing a row can never fail a batch: the funnel has already taken the
+submission and issued the certificate by that point, so a database problem is
+logged, counted in the batch summary (`rows on Submissions page:`) and otherwise
+ignored.
+
+### Importing batches that ran before this existed
+
+Batches run before the runner stored its rows left their leads on disk only.
+Import them with:
+
+```bash
+node scripts/backfillBatchSubmissions.js --dry-run   # report, write nothing
+node scripts/backfillBatchSubmissions.js             # import every batch found
+node scripts/backfillBatchSubmissions.js --batch <id>
+```
+
+It prefers `behavioral-<batchId>.json`, and falls back to a batch's `leads.csv`
+for one that was interrupted before its forensic record was written - that
+source has no qualification answers or user agent, and those stay unset rather
+than being re-drawn. Re-running is a no-op: one document per batch row is
+enforced by a unique index.
+
 ## Verification
 
 ```bash

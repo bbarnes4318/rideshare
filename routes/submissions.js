@@ -12,6 +12,7 @@ router.get('/', authenticateToken, requirePermission('viewSubmissions'), async (
       limit = 20,
       search,
       status,
+      source,
       country,
       dateFrom,
       dateTo,
@@ -38,6 +39,16 @@ router.get('/', authenticateToken, requirePermission('viewSubmissions'), async (
     // Status filter
     if (status) {
       filter.status = status;
+    }
+
+    // Where the record came from: 'form' for organic posts through /api-proxy/,
+    // 'batch' for rows the CSV harness submitted. Records predating the field
+    // have no `source` at all, so 'form' has to include those rather than
+    // hiding every submission taken before batch rows were stored.
+    if (source === 'batch') {
+      filter.source = 'batch';
+    } else if (source === 'form') {
+      filter.source = { $ne: 'batch' };
     }
     
     // Country filter
@@ -81,6 +92,7 @@ router.get('/', authenticateToken, requirePermission('viewSubmissions'), async (
       filters: {
         search,
         status,
+        source,
         country,
         dateFrom,
         dateTo
