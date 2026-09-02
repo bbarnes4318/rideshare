@@ -21,8 +21,23 @@ const authenticateToken = async (req, res, next) => {
     req.user = user;
     next();
   } catch (error) {
+    // An expired or malformed token is a failure to AUTHENTICATE, so it must be
+    // 401, not 403. The dashboard only clears its stored token and redirects to
+    // sign in on a 401; when this returned 403 an expired session showed
+    // "403 Forbidden (/api/analytics/dashboard)" and "Failed to load
+    // submissions" on a 30s loop forever, with no way to reach the login page.
+    // 403 stays reserved for an authenticated user lacking a permission.
+    if (error.name === 'TokenExpiredError') {
+      // Routine, and it happens once per user per day. No stack trace.
+      console.warn('Auth: expired token rejected');
+      return res.status(401).json({ message: 'Session expired', expired: true });
+    }
+    if (error.name === 'JsonWebTokenError' || error.name === 'NotBeforeError') {
+      console.warn('Auth: invalid token rejected -', error.message);
+      return res.status(401).json({ message: 'Invalid token' });
+    }
     console.error('Auth error:', error);
-    return res.status(403).json({ message: 'Invalid or expired token' });
+    return res.status(500).json({ message: 'Authentication failed' });
   }
 };
 
