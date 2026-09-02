@@ -44,9 +44,9 @@ const userSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for faster queries
-userSchema.index({ email: 1 });
-userSchema.index({ username: 1 });
+// No explicit index() calls for email or username: `unique: true` on those
+// fields already builds an index for each, and declaring the same key pattern
+// twice made Mongoose log a "Duplicate schema index" warning on every start.
 
 // Hash password before saving
 userSchema.pre('save', async function(next) {
