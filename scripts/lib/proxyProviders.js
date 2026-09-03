@@ -144,7 +144,7 @@ const shifter = {
       return 'Shifter returned 407 Proxy Authentication Required: check SHIFTER_PROXY_USERNAME / SHIFTER_PROXY_PASSWORD. (Measured: 407 is credentials only; a bad targeting flag comes back as 400.)';
     }
     if (probe.statusCode === 400) {
-      return 'Shifter returned 400 Bad Request: an unknown or malformed targeting flag is in the username. A bad city/region slug is the likeliest cause - Shifter wants underscores ("city-jersey_city"), not IPRoyal\'s bare form ("city-jerseycity").';
+      return 'Shifter returned 400 Bad Request: an unknown or malformed targeting flag is in the username. A bad city/region slug is the likeliest cause - Shifter wants underscores ("city-jersey_city"), not IPRoyal\'s bare form ("city-jerseycity"). A single 400 mid-ladder can also be transient; one on every probe is not.';
     }
     if (probe.statusCode === 404 || probe.statusCode === 502 || probe.statusCode === 503) {
       return `Shifter returned HTTP ${probe.statusCode}: no residential IPs matched the requested targeting. Broaden the target or unset SHIFTER_STRICT_TARGETING to let the gateway widen the pool.`;

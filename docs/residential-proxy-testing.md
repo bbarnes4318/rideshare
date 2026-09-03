@@ -251,6 +251,11 @@ Shifter, measured against `p.shifter.io:443` on 2026-09-02:
 | `407` | Credentials rejected - check `SHIFTER_PROXY_USERNAME` / `SHIFTER_PROXY_PASSWORD` |
 | `509` | Plan bandwidth exhausted; enable Extra Traffic or top up |
 
+> A `400` is not always a bad slug: during a live state-tier run, seven probes
+> on an identical, well-formed username returned `200` and the eighth returned
+> `400`. Treat a single `400` mid-ladder as transient - the attempt loop already
+> does - and a `400` on every probe as a real slug problem.
+
 > Shifter's published documentation says an unknown flag returns `407` and a
 > strict miss returns `502`. Neither held in practice: an unknown flag returned
 > `400`, and a strict miss returned `503`, `502` or `404` depending on which
