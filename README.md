@@ -101,21 +101,21 @@ server.js              # Main Express server
   // Form Data
   fname, lname, email, phone, address, city, state, zip,
   gender, date_of_birth, diagnosis_year,
-
+  
   // Technical Data
   ip_address, user_agent, trusted_form_cert_url,
-
+  
   // Enhanced Geolocation
   geolocation: {
     country, region, city, latitude, longitude,
     timezone, isp, organization
   },
-
+  
   // Device Intelligence
   browser_info: { family, version, major },
   os_info: { family, version, major },
   device_info: { family, type, brand },
-
+  
   // Analytics
   quality_score, status, submission_date,
   referrer, campaign_data
