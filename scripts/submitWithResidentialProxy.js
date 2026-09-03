@@ -3,157 +3,31 @@
 require('dotenv').config();
 
 const { chromium } = require('playwright-core');
-const zipcodes = require('zipcodes');
 const {
-  probeProxyConnect,
-  describeProxyFailure,
+  PROXY_PROVIDER,
+  PROXY_HOST,
+  PROXY_PORT,
+  IP_CHECK_URL,
+  LAUNCH_ARGS,
+  arg,
+  required,
+  normalizeProxyToken,
+  getZipTarget,
+  proxyCredentialsFromEnv,
+  selectResidentialSession,
+  preflightProxy,
+  resolveBrowserPath,
   lookupIpGeo,
-  fetchThroughProxy,
-} = require('./proxyDiagnostics');
+} = require('./lib/funnelCore');
 
+// This runner drives the Express/index.html app in THIS repository, whose form
+// is a single page with #zip / #gender / #submit-button ids. The production
+// funnel at quotes.nationallifecoverage.org serves something else entirely -
+// see scripts/submitProductionFunnel.js for that one. Only the DOM handling
+// below is specific to this app; the ZIP resolution, provider targeting and
+// sticky-session selection are the shared ones in lib/funnelCore.js, so this
+// runner can no longer drift away from the runner that is actually in use.
 const TARGET_URL = process.env.TRUSTEDFORM_TARGET_URL || 'https://quotes.nationallifecoverage.org/';
-const PROXY_HOST = process.env.IPROYAL_PROXY_HOST || 'geo.iproyal.com';
-const PROXY_PORT = Number(process.env.IPROYAL_PROXY_PORT || 12321);
-const IP_CHECK_URL = process.env.PROXY_IP_CHECK_URL || 'https://ipv4.icanhazip.com';
-// Plain-HTTP probe endpoint: sampling a session's egress IP does not need TLS,
-// and avoiding a CONNECT tunnel per probe keeps the shared-CPU host cheap.
-const SESSION_PROBE_URL = process.env.PROXY_SESSION_PROBE_URL || 'http://ipv4.icanhazip.com';
-const SESSION_ATTEMPTS = Number(process.env.IPROYAL_SESSION_ATTEMPTS || 8);
-const SESSION_LIFETIME_MINUTES = Number(process.env.IPROYAL_SESSION_LIFETIME_MINUTES || 30);
-
-function arg(name, fallback = undefined) {
-  const index = process.argv.indexOf(`--${name}`);
-  if (index === -1) return fallback;
-  return process.argv[index + 1] ?? fallback;
-}
-
-function required(name, value) {
-  if (value === undefined || value === null || value === '') {
-    throw new Error(`Missing required value: ${name}`);
-  }
-  return String(value);
-}
-
-// IPRoyal location tokens must be lowercase alphanumeric with NO separator:
-// "_state-newyork" and "_city-losangeles" resolve, while "_state-new-york" and
-// "_city-los-angeles" are rejected outright (the proxy refuses the tunnel).
-// Verified against geo.iproyal.com:12321 on 2026-08-31.
-function normalizeProxyToken(value) {
-  return String(value)
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '');
-}
-
-function getZipTarget(zip) {
-  const normalizedZip = String(zip).trim().slice(0, 5);
-  const location = zipcodes.lookup(normalizedZip);
-
-  if (!location) {
-    throw new Error(`ZIP ${normalizedZip} could not be resolved locally.`);
-  }
-
-  return {
-    zip: normalizedZip,
-    city: location.city,
-    state: location.state,
-    // zipcodes reports the two-letter code (TN); IPRoyal's router expects the
-    // spelled-out state name (tennessee) in the password targeting suffix.
-    stateName: zipcodes.states.abbr[location.state] || location.state,
-    latitude: location.latitude,
-    longitude: location.longitude,
-  };
-}
-
-// IPRoyal documents residential targeting as country + city (its own samples
-// use "_country-us_city-knoxville" with no state token). Measured against
-// geo.iproyal.com:12321, that form also lands more accurately than adding a
-// state token, which over-constrains the pool:
-//
-//   _country-us_city-nashville                   -> 3/4 Nashville
-//   _country-us_state-tennessee_city-nashville   -> 2/4 Nashville
-//
-// IPRoyal's city vocabulary also differs from the zipcodes database - it knows
-// New York City as "newyorkcity" and has no peers at all for "city-newyork" -
-// and even a valid city can be momentarily empty, so degrade through wider
-// targets rather than failing the run.
-const TARGETING_TIERS = [
-  { name: 'city (IPRoyal country+city form)', state: false, city: true },
-  { name: 'state only', state: true, city: false },
-  { name: 'country only', state: false, city: false },
-];
-
-function buildProxyPassword(basePassword, location, session, tier = TARGETING_TIERS[0]) {
-  const tokens = [basePassword, 'country-us'];
-
-  if (tier.state) tokens.push(`state-${normalizeProxyToken(location.stateName)}`);
-  if (tier.city) tokens.push(`city-${normalizeProxyToken(location.city)}`);
-
-  // A sticky session pins one residential peer for the whole run. Without it
-  // IPRoyal rotates per request, so the page load, the TrustedForm pings and
-  // the /api-proxy/ POST would each egress from a different IP.
-  if (session) {
-    tokens.push(`session-${session}`, `lifetime-${SESSION_LIFETIME_MINUTES}m`);
-  }
-
-  return tokens.join('_');
-}
-
-// Sample candidate sticky sessions over plain HTTP and keep the one whose
-// egress IP actually lands in the ZIP's city/state. IPRoyal widens the pool
-// silently when a city has no free peers, so without this the run would just
-// accept whatever US IP it was handed.
-async function selectResidentialSession({ host, port, username, basePassword, location }) {
-  let fallback = null;
-
-  for (const tier of TARGETING_TIERS) {
-    console.log(`  targeting: ${tier.name}`);
-    let tierProducedEgress = false;
-
-    for (let attempt = 1; attempt <= SESSION_ATTEMPTS; attempt += 1) {
-      const session = `nlc${Math.random().toString(36).slice(2, 10)}`;
-      const password = buildProxyPassword(basePassword, location, session, tier);
-      const result = await fetchThroughProxy({ host, port, username, password, url: SESSION_PROBE_URL });
-
-      if (!result.ok || !/^\d{1,3}(\.\d{1,3}){3}$/.test(result.body)) {
-        console.log(`    probe ${attempt}/${SESSION_ATTEMPTS}: no usable egress`
-          + ` (${result.error || `HTTP ${result.statusCode}`})`);
-        continue;
-      }
-
-      tierProducedEgress = true;
-      const ip = result.body;
-      const geo = await lookupIpGeo(ip);
-      const cityMatch = geo && normalizeProxyToken(geo.city) === normalizeProxyToken(location.city);
-      const stateMatch = geo && normalizeProxyToken(geo.regionName) === normalizeProxyToken(location.stateName);
-      console.log(`    probe ${attempt}/${SESSION_ATTEMPTS}: ${ip} -> ${geo ? `${geo.city}, ${geo.regionName}` : 'unknown location'}`);
-
-      if (cityMatch && stateMatch) {
-        console.log(`  matched ${location.city}, ${location.state} via ${tier.name}`);
-        return { session, password, ip, geo, match: 'city + state matched', tier: tier.name };
-      }
-      if (stateMatch && (!fallback || fallback.match !== 'state matched, city did not')) {
-        fallback = { session, password, ip, geo, match: 'state matched, city did not', tier: tier.name };
-      } else if (!fallback) {
-        fallback = { session, password, ip, geo, match: 'NOT matched - IPRoyal fell back to a wider pool', tier: tier.name };
-      }
-    }
-
-    // A tier that never returned an egress IP means IPRoyal has no peers for
-    // that target at all; widening is the only way forward.
-    if (!tierProducedEgress) {
-      console.log(`  no peers available for ${tier.name}; widening`);
-      continue;
-    }
-    if (fallback && fallback.match === 'state matched, city did not') break;
-  }
-
-  if (!fallback) {
-    throw new Error(`No usable IPRoyal residential session for ${location.city}, ${location.state}.`);
-  }
-  console.log(`  no exact city match; using best available (${fallback.match})`);
-  return fallback;
-}
 
 // The form's own submit handler emits MM/DD/YYYY, but the DOM control is an
 // <input type="date">, which only accepts YYYY-MM-DD via fill(). Convert here so
@@ -186,23 +60,10 @@ async function waitForTrustedFormCert(page) {
 }
 
 async function main() {
-  const username = required(
-    'IPROYAL_PROXY_USERNAME or IPRoyal username',
-    process.env.IPROYAL_PROXY_USERNAME || process.env.IPROYAL_USERNAME,
-  );
-  const basePassword = required(
-    'IPROYAL_PROXY_PASSWORD or IPrRoyal password',
-    process.env.IPROYAL_PROXY_PASSWORD || process.env.IPROYAL_PASSWORD,
-  );
+  const { username, basePassword } = proxyCredentialsFromEnv();
   const zip = required('--zip', arg('zip', process.env.TEST_ZIP));
 
   const location = getZipTarget(zip);
-  // Country-only: this probe answers "is the account usable?" (402/407).
-  // Geo targeting is resolved afterwards by selectResidentialSession, which
-  // can widen when a city has no peers instead of aborting the run.
-  const preflightPassword = buildProxyPassword(
-    basePassword, location, null, TARGETING_TIERS[TARGETING_TIERS.length - 1],
-  );
 
   const payload = {
     zip: location.zip,
@@ -232,24 +93,17 @@ async function main() {
     resolvedCity: location.city,
     resolvedState: location.state,
     zipCentroid: { latitude: location.latitude, longitude: location.longitude },
+    proxyProvider: PROXY_PROVIDER.id,
     proxyHost: PROXY_HOST,
     proxyPort: PROXY_PORT,
   }, null, 2));
 
-  // Server-side diagnostic first: distinguishes an IPRoyal account/credential
-  // problem from a browser problem before Chromium is even started.
-  const probeTarget = new URL(IP_CHECK_URL);
-  const probe = await probeProxyConnect({
-    host: PROXY_HOST,
-    port: PROXY_PORT,
-    username,
-    password: preflightPassword,
-    target: `${probeTarget.hostname}:${probeTarget.port || 443}`,
+  // Server-side diagnostic first: distinguishes an account/credential problem
+  // from a browser problem before Chromium is even started.
+  const probe = await preflightProxy({
+    host: PROXY_HOST, port: PROXY_PORT, username, basePassword, location, ipCheckUrl: IP_CHECK_URL,
   });
-  if (!probe.ok) {
-    throw new Error(describeProxyFailure(probe));
-  }
-  console.log(`IPRoyal CONNECT preflight: HTTP ${probe.statusCode} (tunnel established)`);
+  console.log(`${PROXY_PROVIDER.id} CONNECT preflight: HTTP ${probe.statusCode} (tunnel established)`);
 
   console.log(`Selecting a residential session near ${location.city}, ${location.state}:`);
   const selection = await selectResidentialSession({
@@ -259,29 +113,19 @@ async function main() {
     basePassword,
     location,
   });
-  const proxyPassword = selection.password;
-
-  const browserPath = process.env.CHROME_EXECUTABLE_PATH || process.env.CHROMIUM_EXECUTABLE_PATH;
-  if (!browserPath) {
-    throw new Error('Set CHROME_EXECUTABLE_PATH (or CHROMIUM_EXECUTABLE_PATH) to a local Chromium/Chrome executable.');
-  }
 
   const browser = await chromium.launch({
-    executablePath: browserPath,
+    executablePath: resolveBrowserPath(),
     headless: process.env.HEADLESS !== 'false',
     // Shared-CPU host: keep Chromium to a single lightweight instance.
-    args: [
-      '--no-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-background-networking',
-      '--disable-extensions',
-      '--renderer-process-limit=2',
-    ],
+    args: LAUNCH_ARGS,
     proxy: {
       server: `http://${PROXY_HOST}:${PROXY_PORT}`,
-      username,
-      password: proxyPassword,
+      // Both halves from the selection - Shifter's targeting and sticky sid
+      // live in the username, so the account username alone would silently
+      // egress from somewhere other than the IP that was just verified.
+      username: selection.username,
+      password: selection.password,
     },
   });
 
@@ -296,9 +140,9 @@ async function main() {
     page.setDefaultTimeout(30_000);
 
     const observedIp = await getBrowserObservedIp(page);
-    console.log(`Observed outbound browser IP through IPRoyal: ${observedIp}`);
+    console.log(`Observed outbound browser IP through ${PROXY_PROVIDER.id}: ${observedIp}`);
 
-    // IPRoyal widens the pool silently when the requested city has no peers,
+    // A gateway widens the pool silently when the requested city has no peers,
     // so report where the egress IP actually landed instead of assuming the
     // city/state target was honoured.
     const observedGeo = await lookupIpGeo(observedIp);
@@ -308,7 +152,7 @@ async function main() {
       const stateMatch = normalizeProxyToken(observedGeo.regionName) === normalizeProxyToken(location.stateName);
       if (cityMatch && stateMatch) geoTargetMatch = 'city + state matched';
       else if (stateMatch) geoTargetMatch = 'state matched, city did not';
-      else geoTargetMatch = 'NOT matched - IPRoyal fell back to a wider pool';
+      else geoTargetMatch = 'NOT matched - the gateway fell back to a wider pool';
       console.log(`Observed IP location: ${observedGeo.city}, ${observedGeo.regionName}, ${observedGeo.country}`
         + ` (ISP: ${observedGeo.isp}, hosting: ${observedGeo.hosting})`);
       console.log(`Geo target result: ${geoTargetMatch}`);
@@ -369,12 +213,13 @@ async function main() {
     console.log(`Resolved ZIP: ${location.zip}`);
     console.log(`Resolved City: ${location.city}`);
     console.log(`Resolved State: ${location.state} (${location.stateName})`);
+    console.log(`Proxy Provider: ${PROXY_PROVIDER.id}${selection.strict ? ' (strict targeting)' : ''}`);
     console.log(`Proxy Host: ${PROXY_HOST}:${PROXY_PORT}`);
     console.log(`Observed Browser Public IP: ${observedIp}`);
     console.log(`Observed IP Location: ${observedGeo ? `${observedGeo.city}, ${observedGeo.regionName}` : 'unknown'}`);
     console.log(`Observed IP ISP: ${observedGeo ? observedGeo.isp : 'unknown'}`);
     console.log(`Geo Target Result: ${geoTargetMatch}`);
-    console.log(`IPRoyal Targeting Used: ${selection.tier}`);
+    console.log(`Targeting Used: ${selection.tier}`);
     console.log(`TrustedForm Certificate: ${trustedFormCertUrl}`);
     console.log(`Form Response:`);
     console.log(`${responseMessage}`);

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 //
-// Drive the LIVE production funnel at quotes.nationallifecoverage.org through an
-// IPRoyal residential IP chosen to match the submitted ZIP, and prove that
-// TrustedForm issued a certificate for that proxied session.
+// Drive the LIVE production funnel at quotes.nationallifecoverage.org through a
+// residential IP chosen to match the submitted ZIP, and prove that TrustedForm
+// issued a certificate for that proxied session.
 //
 // This is a different target from scripts/submitWithResidentialProxy.js. That
 // runner drives the Express/index.html app in this repository. The production
@@ -11,7 +11,7 @@
 // completely different (#zipCode, not #zip; a 16-step hash-routed wizard, not a
 // single page). Selectors here were read off the live page, not assumed.
 //
-// The IPRoyal targeting, ZIP resolution, sticky-session selection, TrustedForm
+// The residential targeting, ZIP resolution, sticky-session selection, TrustedForm
 // wait and TrustedForm capture now live in scripts/lib/funnelCore.js so that
 // scripts/behavioralTestRunner.js drives the same implementation rather than a
 // copy of it. The flow below is unchanged.
@@ -21,6 +21,7 @@ require('dotenv').config();
 const { chromium } = require('playwright-core');
 const {
   TARGET_URL,
+  PROXY_PROVIDER,
   PROXY_HOST,
   PROXY_PORT,
   IP_CHECK_URL,
@@ -30,6 +31,7 @@ const {
   required,
   normalizeProxyToken,
   getZipTarget,
+  proxyCredentialsFromEnv,
   selectResidentialSession,
   preflightProxy,
   waitForTrustedFormCert,
@@ -59,8 +61,7 @@ async function fillStepFields(page, fields, lead) {
 const MAX_STEPS = Number(process.env.FUNNEL_MAX_STEPS || 30);
 
 async function main() {
-  const username = required('IPROYAL_PROXY_USERNAME', process.env.IPROYAL_PROXY_USERNAME);
-  const basePassword = required('IPROYAL_PROXY_PASSWORD', process.env.IPROYAL_PROXY_PASSWORD);
+  const { username, basePassword } = proxyCredentialsFromEnv();
   const zip = required('--zip', arg('zip', process.env.TEST_ZIP));
   const location = getZipTarget(zip);
 
@@ -73,15 +74,16 @@ async function main() {
     resolvedCity: location.city,
     resolvedState: location.state,
     zipCentroid: { latitude: location.latitude, longitude: location.longitude },
+    proxyProvider: PROXY_PROVIDER.id,
     proxyHost: PROXY_HOST,
     proxyPort: PROXY_PORT,
   }, null, 2));
 
-  // Account check first (402 = no balance, 407 = bad credentials).
+  // Account check first, before Chromium is started.
   const probe = await preflightProxy({
     host: PROXY_HOST, port: PROXY_PORT, username, basePassword, location, ipCheckUrl: IP_CHECK_URL,
   });
-  console.log('IPRoyal CONNECT preflight: HTTP ' + probe.statusCode + ' (tunnel established)');
+  console.log(PROXY_PROVIDER.id + ' CONNECT preflight: HTTP ' + probe.statusCode + ' (tunnel established)');
 
   console.log('Selecting a residential session near ' + location.city + ', ' + location.state + ':');
   const selection = await selectResidentialSession({
@@ -94,7 +96,10 @@ async function main() {
     args: LAUNCH_ARGS,
     proxy: {
       server: 'http://' + PROXY_HOST + ':' + PROXY_PORT,
-      username,
+      // Both halves come from the selection, never the bare account username:
+      // Shifter carries its targeting and sticky sid in the username, so a
+      // static one here would silently egress from an unrelated city.
+      username: selection.username,
       password: selection.password,
     },
   });
@@ -118,7 +123,7 @@ async function main() {
     await page.goto(IP_CHECK_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
     observedIp = (await page.locator('body').innerText()).trim();
     observedGeo = await lookupIpGeo(observedIp);
-    console.log('Observed outbound browser IP through IPRoyal: ' + observedIp);
+    console.log('Observed outbound browser IP through ' + PROXY_PROVIDER.id + ': ' + observedIp);
     if (observedGeo) {
       console.log('Observed IP location: ' + observedGeo.city + ', ' + observedGeo.regionName
         + ' (ISP: ' + observedGeo.isp + ', hosting: ' + observedGeo.hosting + ')');
@@ -194,7 +199,8 @@ async function main() {
     console.log('Observed IP Location: ' + (observedGeo ? observedGeo.city + ', ' + observedGeo.regionName : 'unknown'));
     console.log('Observed IP ISP: ' + (observedGeo ? observedGeo.isp : 'unknown'));
     console.log('IP matches submitted ZIP: ' + (cityMatch && stateMatch ? 'YES (city + state)' : stateMatch ? 'state only' : 'NO'));
-    console.log('IPRoyal Targeting Used: ' + selection.tier);
+    console.log('Proxy Provider: ' + PROXY_PROVIDER.id + (selection.strict ? ' (strict targeting)' : ''));
+    console.log('Targeting Used: ' + selection.tier);
     console.log('TrustedForm Certificate: ' + trustedFormCertUrl);
     console.log('TrustedForm Certificate ID: ' + certIdFromUrl(trustedFormCertUrl));
     console.log('Post-submit URL: ' + finalUrl);

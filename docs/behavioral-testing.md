@@ -2,7 +2,7 @@
 
 `scripts/behavioralTestRunner.js` is a measurement instrument for the authorized
 ActiveProspect study. It drives the live production funnel through the existing
-IPRoyal residential proxy, with the existing ZIP → location routing and the
+residential proxy, with the existing ZIP → location routing and the
 existing TrustedForm capture, and records a full interaction timeline so
 browser-side telemetry can be correlated with the certificate TrustedForm issues
 for the same session.
@@ -11,7 +11,7 @@ It requires `--test-mode`. Without that flag it refuses to run.
 
 ## What is shared with production, and what is new
 
-The proxy preflight, IPRoyal targeting tiers, sticky-session selection, ZIP
+The proxy preflight, provider targeting tiers, sticky-session selection, ZIP
 resolution, funnel DOM contract (`readStep`, the field → value mapping, the
 answer set, the contact-step test), the TrustedForm certificate wait and the
 TrustedForm capture all moved into `scripts/lib/funnelCore.js` in this change.
@@ -60,7 +60,7 @@ npm run behavior:test -- \
 
 `--cohort all` runs short, then medium, then long. Runs execute **sequentially**,
 each in its own freshly launched browser process and context, with its own
-IPRoyal sticky session — no cookies, localStorage, cache or proxy peer is shared
+residential sticky session — no cookies, localStorage, cache or proxy peer is shared
 between runs.
 
 Lead values fall back to the `TEST_*` environment variables. No test data is
@@ -258,7 +258,7 @@ TrustedForm's internal implementation, which is not inspectable from here.
 ### Confirmed against real TrustedForm
 
 The offline numbers above came from a local stand-in listener. The same
-comparison has since been run through the IPRoyal proxy against the live funnel,
+comparison has since been run through the residential proxy against the live funnel,
 and the values below are read out of the real `/certs/<id>/update` payloads in
 each run's own capture file — TrustedForm's own numbers, not ours:
 
@@ -293,7 +293,7 @@ made from this sample size.**
 ## Live cohort results
 
 One run per cohort against the live funnel, from the deployed commit. Same lead,
-same ZIP, each in its own browser, context and IPRoyal sticky session.
+same ZIP, each in its own browser, context and residential sticky session.
 
 > These three runs predate the pause-budget fix described under
 > [Target adherence](#target-adherence) below, which is why each overshoots its
@@ -426,21 +426,36 @@ were unreachable.
 
 ## Residential IP validation
 
-Before each run, in order: a fresh browser context is started behind the IPRoyal
-proxy, `PROXY_IP_CHECK_URL` is visited to read the browser's actual public IP,
-that IP is geolocated, and the result is compared to the ZIP's city and state.
-The observed IP, city, state, ISP, the targeting tier IPRoyal actually honoured
-and the match level (`city+state`, `state-only`, `no`) all go into the record.
+Before each run, in order: a fresh browser context is started behind the
+residential proxy, `PROXY_IP_CHECK_URL` is visited to read the browser's actual
+public IP, that IP is geolocated, and the result is compared to the ZIP's city
+and state. The provider, whether strict targeting was in force, the observed IP,
+city, state, ISP, the targeting tier actually honoured and the match level
+(`city+state`, `state-only`, `no`) all go into the record, and the provider also
+appears as the `proxyProvider` column in the CSV.
+
+The active provider is `PROXY_PROVIDER` — `shifter` (the default) or `iproyal`.
+Shifter encodes its targeting and its sticky `sid` in the **username** rather
+than the password, so each run launches Chromium with the username *and*
+password returned by the session selection, not with the bare account username.
+Its sticky lifetime is `SHIFTER_SESSION_TTL_SECONDS` — seconds, not minutes,
+defaulting to 1800, because the gateway's own default of 120s expires part-way
+through a long-cohort run. See
+[residential-proxy-testing.md](residential-proxy-testing.md) for the flag format
+and the measured error codes (`400` bad flag, `404`/`502`/`503` nothing matched,
+`407` credentials, `509` bandwidth).
 
 The **browser** egresses through the proxy. No IP header is set, spoofed or
 forwarded — TrustedForm's script runs client-side, so headers could not affect
 what it observes anyway.
 
-IPRoyal documents country and city targeting; it does not offer ZIP-level
-targeting. `07302` therefore targets Jersey City, NJ, and the harness records the
-IP and geo it actually got rather than claiming ZIP-level precision. IPRoyal
-silently widens the pool when a city has no available peers, which is why the
-tier actually used is recorded per run.
+Neither provider offers ZIP-level targeting, only country/region/city. `07302`
+therefore targets Jersey City, NJ, and the harness records the IP and geo it
+actually got rather than claiming ZIP-level precision. Both gateways silently
+widen the pool when a city has no available peers — Shifter does it unless
+`strict-true` is set, and even then its geo database need not agree with
+ip-api's — which is why the tier actually used, and what ip-api saw, are both
+recorded per run.
 
 ## Testing the harness itself
 

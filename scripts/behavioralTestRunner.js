@@ -5,7 +5,7 @@
 //
 // WHAT THIS IS
 //   A measurement instrument. It drives the same production funnel, through
-//   the same IPRoyal residential proxy, with the same ZIP -> location routing
+//   the same residential proxy provider, with the same ZIP -> location routing
 //   and the same TrustedForm capture as scripts/submitProductionFunnel.js
 //   (all of that is shared code in scripts/lib/funnelCore.js). What it adds is
 //   a controlled, randomized interaction model and a full interaction
@@ -531,7 +531,7 @@ async function runOnce(options) {
       scrollProbability: SCROLL_PROBABILITY,
       pauseBoundsMs: [PAUSE_MIN_MS, PAUSE_MAX_MS],
     },
-    proxy: { host: offline ? null : core.PROXY_HOST, port: offline ? null : core.PROXY_PORT, ip: null, country: null, state: null, city: null, isp: null, targeting: null, matchesZip: null },
+    proxy: { provider: offline ? null : core.PROXY_PROVIDER.id, strict: null, host: offline ? null : core.PROXY_HOST, port: offline ? null : core.PROXY_PORT, ip: null, country: null, state: null, city: null, isp: null, targeting: null, matchesZip: null },
     leadLocation: { zip: location.zip, city: location.city, state: location.state, stateName: location.stateName },
     trustedForm: { available: null, availableAtMs: null, certificateUrl: null, certificateId: null, captureFile: null, captureEventCount: 0, signals: {}, observedSignalKeys: [] },
     interactionSummary: {},
@@ -558,20 +558,24 @@ async function runOnce(options) {
         log: say,
       });
       record.proxy.targeting = proxySelection.tier;
+      record.proxy.strict = proxySelection.strict;
     }
 
     const executablePath = core.resolveBrowserPath();
     record.browser.executablePath = executablePath;
 
     // A completely fresh browser process per run: no shared cookies,
-    // localStorage, cache or IPRoyal sticky session between runs.
+    // localStorage, cache or residential sticky session between runs.
     browser = await chromium.launch({
       executablePath,
       headless: process.env.HEADLESS !== 'false',
       args: core.LAUNCH_ARGS,
       proxy: offline ? undefined : {
         server: 'http://' + core.PROXY_HOST + ':' + core.PROXY_PORT,
-        username: credentials.username,
+        // Both halves from the selection: Shifter encodes targeting and the
+        // sticky sid in the username, so the account username alone would put
+        // the browser on a different IP than the one that was just verified.
+        username: proxySelection.username,
         password: proxySelection.password,
       },
     });
@@ -1017,10 +1021,7 @@ async function main() {
   }
   const reportDir = path.resolve(arg('report-dir', process.env.BEHAVIOR_REPORT_DIR || 'test-reports'));
 
-  const credentials = offline ? {} : {
-    username: required('IPROYAL_PROXY_USERNAME', process.env.IPROYAL_PROXY_USERNAME),
-    basePassword: required('IPROYAL_PROXY_PASSWORD', process.env.IPROYAL_PROXY_PASSWORD),
-  };
+  const credentials = offline ? {} : core.proxyCredentialsFromEnv();
 
   const zip = required('--zip', arg('zip', process.env.TEST_ZIP));
   const location = core.getZipTarget(zip);
@@ -1038,7 +1039,8 @@ async function main() {
   console.log('key telemetry:' + telemetryKeys);
   console.log('entry mode:   ' + entryMode
     + (entryMode === 'fill' ? '  (value assignment: emits NO key events)' : '  (real key events)'));
-  console.log('proxy:        ' + (offline ? 'DISABLED (offline self-test)' : core.PROXY_HOST + ':' + core.PROXY_PORT));
+  console.log('proxy:        ' + (offline ? 'DISABLED (offline self-test)'
+    : core.PROXY_PROVIDER.id + ' ' + core.PROXY_HOST + ':' + core.PROXY_PORT));
   console.log('headless:     ' + (process.env.HEADLESS !== 'false'));
   console.log('');
 
@@ -1048,7 +1050,7 @@ async function main() {
       username: credentials.username, basePassword: credentials.basePassword,
       location, ipCheckUrl: core.IP_CHECK_URL,
     });
-    console.log('IPRoyal CONNECT preflight: HTTP ' + probe.statusCode + ' (tunnel established)');
+    console.log(core.PROXY_PROVIDER.id + ' CONNECT preflight: HTTP ' + probe.statusCode + ' (tunnel established)');
     console.log('');
   }
 

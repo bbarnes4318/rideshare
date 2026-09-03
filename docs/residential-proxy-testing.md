@@ -5,17 +5,29 @@
 > [behavioral-testing.md](behavioral-testing.md). It reuses the proxy, ZIP
 > routing and TrustedForm capture described here rather than replacing them.
 
-The existing `/api-proxy/` endpoint cannot change the IP TrustedForm observes because TrustedForm's script executes in the visitor browser. The test runner therefore launches the actual browser through IPRoyal before opening `quotes.nationallifecoverage.org`.
+The existing `/api-proxy/` endpoint cannot change the IP TrustedForm observes because TrustedForm's script executes in the visitor browser. The test runner therefore launches the actual browser through a residential proxy before opening `quotes.nationallifecoverage.org`.
+
+**Shifter is the primary provider.** IPRoyal remains fully supported as a
+selectable fallback. Set `PROXY_PROVIDER=shifter` (the default) or
+`PROXY_PROVIDER=iproyal`; an unrecognised value is a startup error rather than a
+silent default, and there is no automatic failover between the two - if the
+active provider's preflight fails, the run stops with that provider's message.
 
 ## How the ZIP is mapped
 
+This is identical for both providers; only the credential encoding differs.
+
 1. The submitted five-digit ZIP is resolved locally with the existing `zipcodes` package.
-2. Its city and state are used as IPRoyal residential routing constraints.
-3. The browser verifies its public egress IP through `ipv4.icanhazip.com`.
-4. The same browser session opens the quote page, allowing TrustedForm to run through that residential connection.
+2. Its city and state become residential routing constraints, narrowest tier first.
+3. Candidate sticky sessions are probed over plain HTTP and each egress IP is
+   checked against ip-api. A city **and** state match is accepted immediately; a
+   state-only match is held as a fallback.
+4. The browser is launched on the very session that was probed, so TrustedForm
+   observes the IP that was verified.
 5. The runner waits until `#xxTrustedFormCertUrl` contains the real TrustedForm certificate URL before clicking **See My Rates**.
 
-IPRoyal's documented router syntax uses `_country-`, `_state-`, and `_city-` targeting keys. Its public documentation does not document a ZIP targeting key, so city/state targeting is used as the closest supported location match. citeturn123905search3turn123905search7
+Neither provider exposes a ZIP targeting key, so city/state targeting is the
+closest supported location match.
 
 ## Setup
 
@@ -25,7 +37,7 @@ Use Node.js 18+ and an installed Chrome/Chromium binary. Install dependencies wi
 npm install
 ```
 
-Set the variables from `.env.residential-proxy.example` in the process environment. Never commit the real IPRoyal credentials.
+Set the variables from `.env.residential-proxy.example` in the process environment. Never commit the real proxy credentials.
 
 ## Run
 
@@ -49,7 +61,8 @@ The runner prints:
 - the TrustedForm certificate URL
 - the form response
 
-The proxy credentials are intentionally kept out of source control. IPRoyal documents `geo.iproyal.com:12321` for HTTP/HTTPS residential proxy connections and password-based location targeting. citeturn123905search7turn123905search6
+The proxy credentials are intentionally kept out of source control. Shifter
+serves everything from `p.shifter.io:443`; IPRoyal uses `geo.iproyal.com:12321`.
 
 ## Why the browser must be proxied
 
@@ -59,8 +72,9 @@ cannot be influenced by `X-Forwarded-For`, `X-Real-IP`, any other request header
 a JavaScript-assigned value, or a post-hoc database edit. The only way for
 TrustedForm to see a residential IP is for the browser process itself to egress
 through the residential proxy, which is what this runner does: Chromium is
-launched with IPRoyal configured as its HTTP proxy, so the page load, the
-TrustedForm script, its pings, and the `/api-proxy/` POST all share that egress.
+launched with the residential gateway configured as its HTTP proxy, so the page
+load, the TrustedForm script, its pings, and the `/api-proxy/` POST all share
+that egress.
 
 Nginx still sets `X-Real-IP` / `X-Forwarded-For` on the reverse-proxy hop. Those
 are ordinary reverse-proxy headers used by the Express rate limiter and are
@@ -68,14 +82,128 @@ unrelated to what TrustedForm observes.
 
 ## ZIP targeting is approximate, by design
 
-IPRoyal's residential router exposes country, state, and city targeting keys in
-the password. It does not expose a ZIP key in this implementation. The runner
-therefore resolves ZIP -> city/state with the `zipcodes` package and targets the
-city/state. **The egress IP is city/state-accurate, not ZIP-accurate.** The ZIP
-centroid latitude/longitude is printed for reference only; it is not sent to
-IPRoyal.
+Neither router exposes a ZIP key. The runner resolves ZIP -> city/state with the
+`zipcodes` package and targets the city/state. **The egress IP is
+city/state-accurate, not ZIP-accurate.** The ZIP centroid latitude/longitude is
+printed for reference only; it is never sent to the provider.
+
+## Shifter (primary)
+
+One gateway, `p.shifter.io:443`, for HTTP(S) and SOCKS5. Port 443 is a port
+number, not an instruction to speak TLS to the proxy: it takes ordinary
+plain-HTTP proxy requests, which is why the raw `http.request` CONNECT in
+`scripts/proxyDiagnostics.js` works against it unchanged.
+
+### Targeting lives in the username
+
+Shifter is the mirror image of IPRoyal: **the password is always sent
+unmodified**, and every flag is appended to the username with dashes.
+
+```
+customer-USER-country-us-region-new_jersey-city-jersey_city-strict-true-sid-<id>-ttl-1800
+```
+
+| flag | meaning |
+| --- | --- |
+| `country-<code>` | ISO 3166-1 alpha-2, lowercase |
+| `region-<name>` | state/region name, underscores for spaces |
+| `city-<name>` | city name, underscores for spaces |
+| `strict-true` | refuse rather than silently widen when nothing matches |
+| `sid-<id>` | pin a sticky IP |
+| `ttl-<seconds>` | sticky lifetime; valid only alongside `sid` |
+
+Flag order does not matter to the gateway; the runner emits them in the order
+above so logs are diffable.
+
+**Every call site must use both halves of the returned pair.** Sending a static
+account username alongside a targeted password is the one failure mode with no
+error attached: the run succeeds and produces an IP from the wrong city.
 
 ### Token format (measured, not assumed)
+
+Shifter wants **underscores** between words - the opposite of IPRoyal's bare
+concatenation - so the two normalizers are deliberately separate functions.
+
+| token | result |
+| --- | --- |
+| `city-jersey_city` | Jersey City IPs |
+| `city-los_angeles` | Los Angeles IPs |
+| `city-winston_salem` | Winston-Salem IPs |
+| `city-losangeles` + `strict-true` | **200 OK, Burbank IP** - accepted and quietly wrong |
+| `city-jerseycity` + `strict-true` | 200 OK, Jersey City IP - tolerated here, but do not rely on it |
+
+That fourth row is the reason `shifterToken` exists and is tested: an
+IPRoyal-style slug is not rejected, it is silently mis-served. `St. Louis` ->
+`st_louis` and `Winston-Salem` -> `winston_salem`, with no doubled or trailing
+underscores.
+
+`zipcodes` reports the two-letter state code (`NJ`); the region tier maps it
+through `zipcodes.states.abbr` (`NJ` -> `NEW JERSEY` -> `new_jersey`).
+
+### The tier ladder
+
+Narrowest first, mirroring the IPRoyal ladder one-for-one:
+
+| tier | username flags |
+| --- | --- |
+| 1. city | `country-us` + `region-<state>` + `city-<city>` + `strict-true` |
+| 2. state only | `country-us` + `region-<state>` + `strict-true` |
+| 3. country only | `country-us` |
+
+`strict-true` on tiers 1 and 2 is what makes the ladder honest. Without it the
+gateway silently widens, and a probe burns a request on an IP that was never
+going to match. With it the gateway refuses, `fetchThroughProxy` reports
+not-ok, the attempt loop logs no-usable-egress, and after that tier's attempts
+the existing "no peers" branch widens to the next tier - the same control flow
+as before, on a real signal. Set `SHIFTER_STRICT_TARGETING=false` to restore
+broadening.
+
+The ip-api verification still runs on tiers 1 and 2. Shifter's geo database and
+ip-api's do not have to agree, and the forensic record must reflect what ip-api
+saw. Measured: `region-new_jersey-city-jersey_city-strict-true` returned three
+Jersey City IPs and one Trenton IP across four distinct sids.
+
+### The city vocabulary does not always match
+
+Shifter's city list is its own. Measured on 2026-09-02, with `strict-true`:
+
+| requested city | result |
+| --- | --- |
+| `city-jersey_city` | 200 |
+| `city-chicago` | 200 |
+| `city-knoxville` | 200 |
+| `city-new_york` | 503 (no peers) |
+| `city-st_louis` | 503 (no peers) |
+| `city-saint_louis` | **404** - and 404 without `strict-true` too |
+
+`Saint Louis` is exactly what `zipcodes` returns for 63101, so that ZIP falls
+straight through to the state tier. That is the ladder working as designed, not
+a fault.
+
+### Sticky sessions
+
+`sid-<id>` pins one peer; `ttl-<seconds>` sets its lifetime. **The gateway
+default is 120 seconds**, which expires part-way through a funnel run, so the
+runner never omits `ttl` when a `sid` is present. `SHIFTER_SESSION_TTL_SECONDS`
+defaults to `1800`, matching the 30-minute IPRoyal lifetime it replaces.
+
+Verified: the same sid returned the same IP on both requests; three different
+sids returned different IPs. `ttl-1800`, `ttl-3600` and `ttl-86400` were all
+accepted, so 1800 is nowhere near a ceiling. `ttl` without `sid` was also
+accepted rather than refused, but it is meaningless and the runner does not
+send it.
+
+Session ids stay `nlc<random>`, unique per row, which satisfies Shifter's
+do-not-share-a-sid-across-concurrent-workflows rule at the batch concurrency of
+up to 8.
+
+## IPRoyal (selectable fallback)
+
+Set `PROXY_PROVIDER=iproyal`. Targeting is encoded in the **password**:
+
+```
+pass_country-us_city-jerseycity_session-<id>_lifetime-30m
+```
 
 IPRoyal location tokens are lowercase alphanumeric with **no separator**. A
 hyphen is not ignored - the router refuses the tunnel outright:
@@ -87,47 +215,58 @@ hyphen is not ignored - the router refuses the tunnel outright:
 | `_city-los-angeles` | no tunnel |
 | `_city-losangeles` | Los Angeles IPs |
 
-IPRoyal documents targeting as **country + city**, with no state token (its own
-curl/undici/requests/Java samples all use `_country-us_city-knoxville`; only the
-transport differs between languages, never the string). Measured hit rates show
-the state token over-constrains the pool:
+IPRoyal documents targeting as **country + city**, with no state token. Measured
+hit rates show the state token over-constrains the pool:
 
 | targeting | Nashville hit rate |
 | --- | --- |
 | `_country-us_city-nashville` | 3/4 |
 | `_country-us_state-tennessee_city-nashville` | 2/4 |
 
-So the runner tries `country + city` first, then `state only`, then
-`country only`, and prints which tier produced the IP it used.
-
-`zipcodes` reports the two-letter state code (`TN`); the state tier maps it
-through `zipcodes.states.abbr` (`TN` -> `tennessee`), since IPRoyal expects the
-spelled-out name.
-
-### The city vocabulary does not always match
-
+So its ladder is `country + city`, then `state only`, then `country only`.
 IPRoyal names New York City `newyorkcity`; `_city-newyork` has no peers at all
-and returns 503. Any ZIP whose city IPRoyal names differently falls through to
-state targeting automatically.
-
-### Sticky sessions are required
+and returns 503.
 
 By default IPRoyal rotates the exit IP **per request**, so one run egressed from
 several peers - the browser reported `35.132.117.32` while the `/api-proxy/` POST
-arrived from `204.63.10.157`. Since TrustedForm pings throughout the session, the
-runner pins one peer with `_session-<id>_lifetime-30m` (verified: 3/3 identical
-IPs with a session, 3/3 different without).
+arrived from `204.63.10.157`. The runner pins one peer with
+`_session-<id>_lifetime-30m` (verified: 3/3 identical IPs with a session, 3/3
+different without).
 
 ## Preflight diagnostics
 
-`scripts/proxyDiagnostics.js` issues a raw HTTP `CONNECT` to the proxy before
-Chromium is launched. This separates proxy/account faults from browser faults:
+`scripts/proxyDiagnostics.js` issues a raw HTTP `CONNECT` to the gateway before
+Chromium is launched, on the widest tier, so that a momentarily empty city
+cannot be mistaken for a broken account. This separates proxy/account faults
+from browser faults. The failure text comes from the active provider, because
+the same status code means different things to each of them.
+
+Shifter, measured against `p.shifter.io:443` on 2026-09-02:
+
+| CONNECT status | Meaning |
+| --- | --- |
+| `200` | Tunnel established; gateway usable |
+| `400` | Unknown or malformed targeting flag in the username - usually a bad city/region slug |
+| `404` / `502` / `503` | No residential IPs matched the requested targeting; broaden it or unset `SHIFTER_STRICT_TARGETING` |
+| `407` | Credentials rejected - check `SHIFTER_PROXY_USERNAME` / `SHIFTER_PROXY_PASSWORD` |
+| `509` | Plan bandwidth exhausted; enable Extra Traffic or top up |
+
+> Shifter's published documentation says an unknown flag returns `407` and a
+> strict miss returns `502`. Neither held in practice: an unknown flag returned
+> `400`, and a strict miss returned `503`, `502` or `404` depending on which
+> part of the filter came up empty. `407` was returned only for a wrong password
+> or an unknown customer. The codes above are the measured ones.
+
+IPRoyal:
 
 | CONNECT status | Meaning |
 | --- | --- |
 | `200` | Tunnel established; proxy usable |
 | `407` | Credentials rejected - check `IPROYAL_PROXY_USERNAME` / `IPROYAL_PROXY_PASSWORD` |
 | `402` | Credentials accepted but the IPRoyal account has no remaining balance/traffic |
+
+Shifter has no `402`. A connection refused on Shifter means the legacy
+port-based host is being used instead of `p.shifter.io:443`.
 
 ## Runner behaviour notes
 

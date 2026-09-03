@@ -3,16 +3,18 @@
 const http = require('http');
 
 /**
- * Probe the IPRoyal HTTP proxy with a raw CONNECT request.
+ * Probe the residential gateway with a raw CONNECT request.
  *
  * This is deliberately independent of Playwright so that a proxy/account
- * problem can be told apart from a browser problem. The proxy answers the
+ * problem can be told apart from a browser problem. The gateway answers the
  * CONNECT with a status line before any tunnel exists, which is the clearest
- * signal available:
+ * signal available: 200 means the tunnel is up, anything else is refused and
+ * the active provider's describeFailure() explains it.
  *
- *   200 -> tunnel established, proxy is usable
- *   407 -> credentials rejected
- *   402 -> credentials fine, but the IPRoyal account has no balance/traffic
+ * Both vendors listen for plain HTTP proxy requests - Shifter on port 443,
+ * which is a port number and not an instruction to speak TLS to the proxy.
+ * Verified against p.shifter.io:443 on 2026-09-02: this raw http.request
+ * CONNECT gets a 200 status line, exactly as it does from IPRoyal on 12321.
  */
 function probeProxyConnect({ host, port, username, password, target, timeoutMs = 30000 }) {
   return new Promise((resolve) => {
@@ -52,26 +54,14 @@ function probeProxyConnect({ host, port, username, password, target, timeoutMs =
   });
 }
 
-function describeProxyFailure(probe) {
-  if (probe.statusCode === 402) {
-    return 'IPRoyal returned 402 Payment Required: the credentials are accepted but the account has no remaining balance/traffic. Top up the IPRoyal residential plan.';
-  }
-  if (probe.statusCode === 407) {
-    return 'IPRoyal returned 407 Proxy Authentication Required: check IPROYAL_PROXY_USERNAME / IPROYAL_PROXY_PASSWORD.';
-  }
-  if (probe.statusCode) {
-    return `IPRoyal returned HTTP ${probe.statusCode} ${probe.statusMessage || ''}`.trim();
-  }
-  return `Could not reach the IPRoyal proxy: ${probe.error}`;
-}
-
 /**
  * Best-effort geolocation of the observed egress IP.
  *
- * IPRoyal silently widens the pool when a requested city has no available
- * peers, so the only way to know whether the location target was actually
- * honoured is to look up the IP that came back. Never throws: a failed lookup
- * must not fail the submission run.
+ * Both gateways silently widen the pool when a requested city has no available
+ * peers - Shifter does it unless strict-true is set, and even then its geo
+ * database need not agree with ip-api's - so the only way to know where the
+ * session actually landed is to look up the IP that came back. Never throws:
+ * a failed lookup must not fail the submission run.
  */
 function lookupIpGeo(ip, timeoutMs = 10000) {
   return new Promise((resolve) => {
@@ -135,4 +125,4 @@ function fetchThroughProxy({ host, port, username, password, url, timeoutMs = 30
   });
 }
 
-module.exports = { probeProxyConnect, describeProxyFailure, lookupIpGeo, fetchThroughProxy };
+module.exports = { probeProxyConnect, lookupIpGeo, fetchThroughProxy };

@@ -143,7 +143,8 @@ function csvEscape(value) {
 
 // One row per run. Detailed events stay in JSON, never in the CSV.
 const CSV_COLUMNS = [
-  'runId', 'cohort', 'targetDurationSec', 'actualDurationSec', 'proxyIp', 'proxyCity', 'proxyState',
+  'runId', 'cohort', 'targetDurationSec', 'actualDurationSec',
+  'proxyProvider', 'proxyIp', 'proxyCity', 'proxyState',
   'zip', 'city', 'state', 'trustedFormCertificate', 'trustedFormCertificateId', 'wpm', 'kpm',
   'interactionCount', 'keystrokeCount', 'focusCount', 'blurCount', 'scrollCount', 'pauseCount',
   'submitTimestamp', 'success',
@@ -156,6 +157,7 @@ function csvRow(record) {
     cohort: record.cohort,
     targetDurationSec: record.targetDurationSec,
     actualDurationSec: record.actualDurationSec,
+    proxyProvider: g(record, 'proxy', 'provider'),
     proxyIp: g(record, 'proxy', 'ip'),
     proxyCity: g(record, 'proxy', 'city'),
     proxyState: g(record, 'proxy', 'state'),

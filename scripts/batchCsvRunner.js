@@ -8,7 +8,7 @@
 // browser path already in this repository:
 //
 //   fresh browser context
-//     -> IPRoyal residential proxy, geo-selected from the record's ZIP
+//     -> residential proxy, geo-selected from the record's ZIP
 //     -> the real quote funnel at quotes.nationallifecoverage.org
 //     -> TrustedForm initializes normally
 //     -> the real form is completed with real browser events
@@ -288,17 +288,18 @@ async function main() {
     console.log('--offline-selftest: loopback mock funnel, no proxy, nothing submitted anywhere.');
     console.log('');
   } else {
-    credentials = {
-      username: required('IPROYAL_PROXY_USERNAME', process.env.IPROYAL_PROXY_USERNAME),
-      basePassword: required('IPROYAL_PROXY_PASSWORD', process.env.IPROYAL_PROXY_PASSWORD),
-    };
+    credentials = core.proxyCredentialsFromEnv();
     const firstLocation = core.getZipTarget(prepared[0].row.zip);
+    // One preflight for the whole batch. There is no cross-provider failover:
+    // if this fails the batch stops with the provider's own message, and moving
+    // to the other vendor is a deliberate PROXY_PROVIDER change.
     const probe = await core.preflightProxy({
       host: core.PROXY_HOST, port: core.PROXY_PORT,
       username: credentials.username, basePassword: credentials.basePassword,
       location: firstLocation, ipCheckUrl: core.IP_CHECK_URL,
     });
-    console.log('IPRoyal CONNECT preflight: HTTP ' + probe.statusCode + ' (tunnel established)');
+    console.log(core.PROXY_PROVIDER.id + ' CONNECT preflight: HTTP ' + probe.statusCode
+      + ' (tunnel established)');
     console.log('');
   }
 

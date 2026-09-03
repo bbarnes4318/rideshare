@@ -5,9 +5,13 @@
 //
 // Everything here was moved verbatim out of scripts/submitProductionFunnel.js
 // (commit dbea0d6), which is the runner that produced the known-good NJ
-// submission. It lives in one module so the harness drives the *same* IPRoyal
+// submission. It lives in one module so the harness drives the *same* residential
 // targeting, ZIP resolution, sticky-session selection, TrustedForm wait and
 // TrustedForm capture as production, instead of a copy that can drift.
+//
+// The targeting is encoded by the active provider in scripts/lib/proxyProviders.js.
+// The walk below - tier ladder, attempt loop, ip-api verification, and handing the
+// browser the very session that was probed - is the same for every provider.
 //
 // Nothing in this file changes that behavior. New behavior belongs in the
 // harness, not here.
@@ -15,17 +19,22 @@
 const fs = require('fs');
 const {
   probeProxyConnect,
-  describeProxyFailure,
   lookupIpGeo,
   fetchThroughProxy,
 } = require('../proxyDiagnostics');
+const { resolveProvider } = require('./proxyProviders');
+
+// Which residential vendor this process talks to. Resolved once, here, so a
+// single run cannot end up half on one provider and half on another; an
+// unknown PROXY_PROVIDER throws at startup rather than defaulting silently.
+const PROXY_PROVIDER = resolveProvider();
 
 const TARGET_URL = process.env.PRODUCTION_FUNNEL_URL || 'https://quotes.nationallifecoverage.org/';
-const PROXY_HOST = process.env.IPROYAL_PROXY_HOST || 'geo.iproyal.com';
-const PROXY_PORT = Number(process.env.IPROYAL_PROXY_PORT || 12321);
+const PROXY_HOST = PROXY_PROVIDER.host;
+const PROXY_PORT = PROXY_PROVIDER.port;
 const IP_CHECK_URL = process.env.PROXY_IP_CHECK_URL || 'https://ipv4.icanhazip.com';
 const SESSION_PROBE_URL = process.env.PROXY_SESSION_PROBE_URL || 'http://ipv4.icanhazip.com';
-const SESSION_ATTEMPTS = Number(process.env.IPROYAL_SESSION_ATTEMPTS || 8);
+const SESSION_ATTEMPTS = PROXY_PROVIDER.sessionAttempts;
 const SESSION_LIFETIME_MINUTES = Number(process.env.IPROYAL_SESSION_LIFETIME_MINUTES || 30);
 
 const zipcodes = require('zipcodes');
@@ -46,19 +55,18 @@ function required(name, value) {
   return String(value);
 }
 
-// IPRoyal location tokens are lowercase alphanumeric with NO separator:
-// "_city-losangeles" resolves, "_city-los-angeles" is refused outright.
+// Compares two place names for equality, ignoring case and separators, so
+// "Jersey City" from the zipcodes package and "Jersey City" from ip-api agree.
+// This is a COMPARISON helper, not a targeting-token builder: the per-vendor
+// slugs live in scripts/lib/proxyProviders.js and differ from each other.
 function normalizeProxyToken(value) {
   return String(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
-// IPRoyal documents targeting as country + city with no state token, and that
-// lands more accurately than adding one. Widen only if a tier has no peers.
-const TARGETING_TIERS = [
-  { name: 'city (IPRoyal country+city form)', state: false, city: true },
-  { name: 'state only', state: true, city: false },
-  { name: 'country only', state: false, city: false },
-];
+// Narrowest first; supplied by the active provider. Both vendors' ladders are
+// the same three rungs - exact city, state only, then a country floor that
+// always completes - so the walk below is identical either way.
+const TARGETING_TIERS = PROXY_PROVIDER.tiers;
 
 function getZipTarget(zip) {
   const normalizedZip = String(zip).trim().slice(0, 5);
@@ -74,14 +82,23 @@ function getZipTarget(zip) {
   };
 }
 
+/**
+ * Build the auth pair the active provider needs for one targeted, sticky
+ * session. BOTH halves matter: IPRoyal encodes targeting in the password and
+ * Shifter encodes it in the username, so a caller that keeps a static username
+ * and uses only the password gets an untargeted Shifter session that still
+ * succeeds - with an IP from the wrong city and no error anywhere.
+ */
+function buildProxyCredentials(username, basePassword, location, session, tier = TARGETING_TIERS[0]) {
+  return PROXY_PROVIDER.buildCredentials({
+    username, password: basePassword, location, session, tier,
+  });
+}
+
+// Password half only. Kept because the IPRoyal password format is asserted
+// verbatim by test/unit.js, and because nothing but IPRoyal ever needed it.
 function buildProxyPassword(basePassword, location, session, tier = TARGETING_TIERS[0]) {
-  const tokens = [basePassword, 'country-us'];
-  if (tier.state) tokens.push('state-' + normalizeProxyToken(location.stateName));
-  if (tier.city) tokens.push('city-' + normalizeProxyToken(location.city));
-  // Pin one peer for the whole run; IPRoyal otherwise rotates per request and
-  // TrustedForm would observe several different source IPs in one session.
-  if (session) tokens.push('session-' + session, 'lifetime-' + SESSION_LIFETIME_MINUTES + 'm');
-  return tokens.join('_');
+  return buildProxyCredentials('', basePassword, location, session, tier).password;
 }
 
 // `log` is injected rather than assumed: batch rows now run several at a time,
@@ -93,9 +110,14 @@ async function selectResidentialSession({ host, port, username, basePassword, lo
     log('  targeting: ' + tier.name);
     let anyEgress = false;
     for (let attempt = 1; attempt <= SESSION_ATTEMPTS; attempt += 1) {
+      // Unique per attempt, and therefore per row: Shifter documents that a
+      // sid must not be shared across concurrent workflows, and a batch runs
+      // up to 8 rows at once.
       const session = 'nlc' + Math.random().toString(36).slice(2, 10);
-      const password = buildProxyPassword(basePassword, location, session, tier);
-      const result = await fetchThroughProxy({ host, port, username, password, url: SESSION_PROBE_URL });
+      const creds = buildProxyCredentials(username, basePassword, location, session, tier);
+      const result = await fetchThroughProxy({
+        host, port, username: creds.username, password: creds.password, url: SESSION_PROBE_URL,
+      });
       if (!result.ok || !/^\d{1,3}(\.\d{1,3}){3}$/.test(result.body)) {
         log('    probe ' + attempt + '/' + SESSION_ATTEMPTS + ': no usable egress ('
           + (result.error || 'HTTP ' + result.statusCode) + ')');
@@ -108,36 +130,71 @@ async function selectResidentialSession({ host, port, username, basePassword, lo
       const stateMatch = geo && normalizeProxyToken(geo.regionName) === normalizeProxyToken(location.stateName);
       log('    probe ' + attempt + '/' + SESSION_ATTEMPTS + ': ' + ip + ' -> '
         + (geo ? geo.city + ', ' + geo.regionName : 'unknown location'));
+      // The browser is launched on this exact session, so it must carry both
+      // halves of the auth pair the probe used - see buildProxyCredentials.
+      const selected = (match) => ({
+        session,
+        username: creds.username,
+        password: creds.password,
+        ip,
+        geo,
+        match,
+        tier: tier.name,
+        provider: PROXY_PROVIDER.id,
+        strict: !!tier.strict,
+      });
       if (cityMatch && stateMatch) {
         log('  matched ' + location.city + ', ' + location.state + ' via ' + tier.name);
-        return { session, password, ip, geo, match: 'city + state matched', tier: tier.name };
+        return selected('city + state matched');
       }
       if (stateMatch && (!fallback || fallback.match !== 'state matched, city did not')) {
-        fallback = { session, password, ip, geo, match: 'state matched, city did not', tier: tier.name };
+        fallback = selected('state matched, city did not');
       } else if (!fallback) {
-        fallback = { session, password, ip, geo, match: 'NOT matched - wider pool', tier: tier.name };
+        fallback = selected('NOT matched - wider pool');
       }
     }
     if (!anyEgress) { log('  no peers for ' + tier.name + '; widening'); continue; }
     if (fallback && fallback.match === 'state matched, city did not') break;
   }
-  if (!fallback) throw new Error('No usable IPRoyal residential session for ' + location.city + ', ' + location.state);
+  if (!fallback) {
+    throw new Error('No usable ' + PROXY_PROVIDER.id + ' residential session for '
+      + location.city + ', ' + location.state);
+  }
   log('  no exact city match; using best available (' + fallback.match + ')');
   return fallback;
 }
 
-// Account check first (402 = no balance, 407 = bad credentials).
+/**
+ * Account check before any browser starts, on the widest tier so that a
+ * momentarily empty city cannot be mistaken for a broken account. The failure
+ * text is the provider's, because the status codes mean different things to
+ * each of them (IPRoyal 402 = no balance; Shifter 400 = bad targeting flag).
+ */
 async function preflightProxy({ host, port, username, basePassword, location, ipCheckUrl }) {
   const probeTarget = new URL(ipCheckUrl || IP_CHECK_URL);
+  const widest = TARGETING_TIERS[TARGETING_TIERS.length - 1];
+  const creds = buildProxyCredentials(username, basePassword, location, null, widest);
   const probe = await probeProxyConnect({
     host,
     port,
-    username,
-    password: buildProxyPassword(basePassword, location, null, TARGETING_TIERS[TARGETING_TIERS.length - 1]),
+    username: creds.username,
+    password: creds.password,
     target: probeTarget.hostname + ':' + (probeTarget.port || 443),
   });
-  if (!probe.ok) throw new Error(describeProxyFailure(probe));
+  if (!probe.ok) throw new Error(PROXY_PROVIDER.describeFailure(probe));
   return probe;
+}
+
+/**
+ * The active provider's credentials, read from the env vars that provider
+ * documents. Call sites used to name IPROYAL_* directly, which silently kept
+ * them on IPRoyal's variables after the provider switch.
+ */
+function proxyCredentialsFromEnv() {
+  return {
+    username: required(PROXY_PROVIDER.usernameEnv, process.env[PROXY_PROVIDER.usernameEnv]),
+    basePassword: required(PROXY_PROVIDER.passwordEnv, process.env[PROXY_PROVIDER.passwordEnv]),
+  };
 }
 
 async function waitForTrustedFormCert(page, timeout = 45000) {
@@ -313,6 +370,7 @@ function buildLead(location) {
 
 module.exports = {
   TARGET_URL,
+  PROXY_PROVIDER,
   PROXY_HOST,
   PROXY_PORT,
   IP_CHECK_URL,
@@ -327,6 +385,8 @@ module.exports = {
   normalizeProxyToken,
   getZipTarget,
   buildProxyPassword,
+  buildProxyCredentials,
+  proxyCredentialsFromEnv,
   selectResidentialSession,
   preflightProxy,
   waitForTrustedFormCert,

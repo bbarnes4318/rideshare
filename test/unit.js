@@ -31,7 +31,15 @@ process.argv.push(
   '--lname', 'TestLead', '--email', 'dana.testlead@example.com', '--phone', '5513326220',
 );
 
+// funnelCore resolves its provider once, at require time, and Shifter is the
+// default. Pin IPRoyal here so the historical password assertions below keep
+// exercising the exact strings they always have - if the IPRoyal encoding ever
+// changes, these fail rather than quietly testing something else. The Shifter
+// encoding is tested against the provider module directly, further down.
+process.env.PROXY_PROVIDER = 'iproyal';
+
 const core = require('../scripts/lib/funnelCore');
+const providers = require('../scripts/lib/proxyProviders');
 const reporting = require('../scripts/lib/reporting');
 
 console.log('funnelCore');
@@ -79,6 +87,118 @@ test('buildProxyPassword widens through the documented tiers', () => {
     core.buildProxyPassword('secret', location, null, core.TARGETING_TIERS[2]),
     'secret_country-us',
   );
+});
+
+// --- provider selection ----------------------------------------------------
+
+test('the default provider is Shifter, and an unknown one is a hard error', () => {
+  assert.strictEqual(providers.resolveProvider(undefined).id, 'iproyal', 'env pins iproyal above');
+  assert.strictEqual(providers.resolveProvider(null).id, 'shifter', 'no value at all defaults to shifter');
+  assert.strictEqual(providers.resolveProvider('shifter').id, 'shifter');
+  assert.strictEqual(providers.resolveProvider('IPRoyal').id, 'iproyal');
+  assert.throws(() => providers.resolveProvider('brightdata'), /Unknown PROXY_PROVIDER "brightdata"/);
+  assert.throws(() => providers.resolveProvider('shifter.io'), /Unknown PROXY_PROVIDER/);
+});
+
+test('Shifter and IPRoyal use the gateway defaults they document', () => {
+  assert.strictEqual(providers.shifter.host, 'p.shifter.io');
+  assert.strictEqual(providers.shifter.port, 443);
+  assert.strictEqual(providers.iproyal.host, 'geo.iproyal.com');
+  assert.strictEqual(providers.iproyal.port, 12321);
+});
+
+// --- Shifter token normalization -------------------------------------------
+//
+// Deliberately NOT the IPRoyal rule: Shifter wants underscores between words.
+// Measured on 2026-09-02, "city-losangeles" is accepted by the gateway and then
+// answered with a Burbank IP, so a slug that is merely wrong never raises an
+// error - it quietly returns the wrong city. Hence these cases.
+
+test('shifterToken separates words with a single underscore', () => {
+  assert.strictEqual(providers.shifterToken('Jersey City'), 'jersey_city');
+  assert.strictEqual(providers.shifterToken('NEW JERSEY'), 'new_jersey');
+  assert.strictEqual(providers.shifterToken('Los Angeles'), 'los_angeles');
+  assert.strictEqual(providers.shifterToken('New South Wales'), 'new_south_wales');
+});
+
+test('shifterToken never emits doubled or trailing underscores', () => {
+  // "St. Louis" and "Winston-Salem" are the cases a naive replace gets wrong:
+  // ". " is two separators in a row, and a trailing "." leaves a dangling _.
+  assert.strictEqual(providers.shifterToken('St. Louis'), 'st_louis');
+  assert.strictEqual(providers.shifterToken('Winston-Salem'), 'winston_salem');
+  assert.strictEqual(providers.shifterToken('Coeur d\'Alene'), 'coeur_d_alene');
+  assert.strictEqual(providers.shifterToken('  Saint Louis.  '), 'saint_louis');
+  for (const name of ['St. Louis', 'Winston-Salem', 'Coeur d\'Alene', '  Saint Louis.  ']) {
+    const token = providers.shifterToken(name);
+    assert.ok(!token.includes('__'), name + ' produced a doubled underscore: ' + token);
+    assert.ok(!/^_|_$/.test(token), name + ' produced a leading/trailing underscore: ' + token);
+  }
+});
+
+// --- Shifter credential encoding -------------------------------------------
+
+test('Shifter encodes targeting in the username and leaves the password alone', () => {
+  const location = core.getZipTarget('07302');
+  const creds = providers.shifter.buildCredentials({
+    username: 'customer-jimbosky35', password: 'secret', location, session: null,
+  });
+  assert.strictEqual(
+    creds.username,
+    'customer-jimbosky35-country-us-region-new_jersey-city-jersey_city-strict-true',
+  );
+  assert.strictEqual(creds.password, 'secret', 'the password half never carries targeting');
+});
+
+test('Shifter widens through the same three rungs as IPRoyal', () => {
+  const location = core.getZipTarget('07302');
+  const at = (i) => providers.shifter.buildCredentials({
+    username: 'customer-jimbosky35', password: 'secret', location, session: null,
+    tier: providers.shifter.tiers[i],
+  }).username;
+  assert.strictEqual(at(0), 'customer-jimbosky35-country-us-region-new_jersey-city-jersey_city-strict-true');
+  assert.strictEqual(at(1), 'customer-jimbosky35-country-us-region-new_jersey-strict-true');
+  // The country floor is non-strict on purpose: it must always complete.
+  assert.strictEqual(at(2), 'customer-jimbosky35-country-us');
+  assert.strictEqual(providers.shifter.tiers.length, providers.iproyal.tiers.length);
+});
+
+test('Shifter emits ttl only alongside sid, and pins the session for 1800s', () => {
+  const location = core.getZipTarget('07302');
+  const ttl = providers.shifter.sessionTtlSeconds;
+  assert.strictEqual(ttl, 1800, 'the gateway default of 120s expires mid-run');
+
+  const withSession = providers.shifter.buildCredentials({
+    username: 'customer-jimbosky35', password: 'secret', location, session: 'abc123',
+  }).username;
+  assert.strictEqual(
+    withSession,
+    'customer-jimbosky35-country-us-region-new_jersey-city-jersey_city-strict-true-sid-abc123-ttl-' + ttl,
+  );
+
+  for (const tier of providers.shifter.tiers) {
+    const username = providers.shifter.buildCredentials({
+      username: 'customer-jimbosky35', password: 'secret', location, session: null, tier,
+    }).username;
+    assert.ok(!username.includes('-ttl-'), 'ttl without sid is invalid: ' + username);
+    assert.ok(!username.includes('-sid-'), username);
+  }
+});
+
+test('Shifter failure text names the code the gateway actually returns', () => {
+  // Measured against p.shifter.io:443 on 2026-09-02. The published docs say an
+  // unknown flag is 407 and a strict miss is 502; neither matched in practice.
+  assert.match(providers.shifter.describeFailure({ statusCode: 407 }), /SHIFTER_PROXY_USERNAME/);
+  assert.match(providers.shifter.describeFailure({ statusCode: 400 }), /targeting flag/);
+  assert.match(providers.shifter.describeFailure({ statusCode: 503 }), /no residential IPs matched/);
+  assert.match(providers.shifter.describeFailure({ statusCode: 502 }), /no residential IPs matched/);
+  assert.match(providers.shifter.describeFailure({ statusCode: 404 }), /no residential IPs matched/);
+  assert.match(providers.shifter.describeFailure({ statusCode: 509 }), /Extra Traffic/);
+  assert.match(providers.shifter.describeFailure({ error: 'ECONNREFUSED' }), /Could not reach/);
+  // Shifter has no 402: it must fall through to the generic line rather than
+  // repeating IPRoyal's balance story about a code this gateway never sends.
+  assert.strictEqual(providers.shifter.describeFailure({ statusCode: 402 }), 'Shifter returned HTTP 402');
+  assert.ok(!/balance|Payment Required/i.test(providers.shifter.describeFailure({ statusCode: 402 })));
+  assert.match(providers.iproyal.describeFailure({ statusCode: 402 }), /no remaining balance/);
 });
 
 test('certIdFromUrl returns the bare id, and null for no certificate', () => {
