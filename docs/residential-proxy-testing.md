@@ -218,6 +218,13 @@ The `strict-off` row is the one that matters for the ladder: it confirms the
 country floor completes rather than erroring, which is the whole reason the
 floor sends the flag explicitly.
 
+One more, seen on the server's first run: a probe can come back as
+`Parse Error: Data after \`Connection: close\`` - a response Node's HTTP parser
+rejects outright, so there is no status code to read. The attempt loop treats it
+as "no usable egress" and the next probe succeeded, which is what the eight
+attempts per tier are for. Worth recognising rather than chasing: it is the
+gateway malforming a response, not a targeting or credential problem.
+
 ## Shifter (selectable fallback)
 
 Set `PROXY_PROVIDER=shifter`. One gateway, `p.shifter.io:443`, for HTTP(S) and SOCKS5. Port 443 is a port
