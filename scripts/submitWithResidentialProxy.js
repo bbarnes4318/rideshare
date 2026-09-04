@@ -121,9 +121,9 @@ async function main() {
     args: LAUNCH_ARGS,
     proxy: {
       server: `http://${PROXY_HOST}:${PROXY_PORT}`,
-      // Both halves from the selection - Shifter's targeting and sticky sid
-      // live in the username, so the account username alone would silently
-      // egress from somewhere other than the IP that was just verified.
+      // Both halves from the selection - Geonode's and Shifter's targeting and
+      // sticky session id live in the username, so the account username alone
+      // would silently egress from somewhere other than the IP just verified.
       username: selection.username,
       password: selection.password,
     },

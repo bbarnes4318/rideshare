@@ -7,15 +7,16 @@
 
 The existing `/api-proxy/` endpoint cannot change the IP TrustedForm observes because TrustedForm's script executes in the visitor browser. The test runner therefore launches the actual browser through a residential proxy before opening `quotes.nationallifecoverage.org`.
 
-**Shifter is the primary provider.** IPRoyal remains fully supported as a
-selectable fallback. Set `PROXY_PROVIDER=shifter` (the default) or
-`PROXY_PROVIDER=iproyal`; an unrecognised value is a startup error rather than a
-silent default, and there is no automatic failover between the two - if the
-active provider's preflight fails, the run stops with that provider's message.
+**Geonode is the primary provider.** Shifter and IPRoyal both remain fully
+supported as selectable fallbacks. Set `PROXY_PROVIDER=geonode` (the default),
+`PROXY_PROVIDER=shifter` or `PROXY_PROVIDER=iproyal`; an unrecognised value is a
+startup error rather than a silent default, and there is no automatic failover
+between them - if the active provider's preflight fails, the run stops with that
+provider's message.
 
 ## How the ZIP is mapped
 
-This is identical for both providers; only the credential encoding differs.
+This is identical for all three providers; only the credential encoding differs.
 
 1. The submitted five-digit ZIP is resolved locally with the existing `zipcodes` package.
 2. Its city and state become residential routing constraints, narrowest tier first.
@@ -61,8 +62,9 @@ The runner prints:
 - the TrustedForm certificate URL
 - the form response
 
-The proxy credentials are intentionally kept out of source control. Shifter
-serves everything from `p.shifter.io:443`; IPRoyal uses `geo.iproyal.com:12321`.
+The proxy credentials are intentionally kept out of source control. Geonode
+serves sticky sessions from `proxy.geonode.io:10000`; Shifter serves everything
+from `p.shifter.io:443`; IPRoyal uses `geo.iproyal.com:12321`.
 
 ## Why the browser must be proxied
 
@@ -87,9 +89,138 @@ Neither router exposes a ZIP key. The runner resolves ZIP -> city/state with the
 city/state-accurate, not ZIP-accurate.** The ZIP centroid latitude/longitude is
 printed for reference only; it is never sent to the provider.
 
-## Shifter (primary)
+## Geonode (primary)
 
-One gateway, `p.shifter.io:443`, for HTTP(S) and SOCKS5. Port 443 is a port
+Gateway `proxy.geonode.io`. Unlike the other two vendors, **the port selects the
+session type**, not just the protocol:
+
+| protocol | rotating | sticky |
+| --- | --- | --- |
+| HTTP/HTTPS | 9000-9010 | 10000-10900 |
+| SOCKS5 | 11000-11010 | 12000-12010 |
+
+The runner defaults to `10000`. A rotating port would hand out a fresh IP per
+request, and TrustedForm would observe several source IPs inside one run - the
+same reason IPRoyal needs an explicit `session` token. Anything in the sticky
+range works if a specific port is wanted; set `GEONODE_PROXY_PORT`.
+
+Credentials come from the Geonode dashboard (Proxies section) as a username /
+password pair. The username is the base half of the auth pair and typically
+carries a `geonode_` prefix; the endpoint the dashboard shows is the
+`hostname:port:username:password` form of the same thing.
+
+### Targeting lives in the username
+
+Like Shifter and unlike IPRoyal, **the password is always sent unmodified** and
+every flag is appended to the username with dashes:
+
+```
+geonode_USER-type-residential-country-US-city-jerseycity-strict-on-session-<id>-lifetime-30
+```
+
+| flag | meaning |
+| --- | --- |
+| `type-residential` | pin the IP pool to residential |
+| `country-US` | ISO 3166-1 alpha-2, uppercase |
+| `state-newjersey` | state, **never alongside a city** |
+| `city-jerseycity` | city, **never alongside a state** |
+| `strict-on` / `strict-off` | refuse, or allow a substitute location |
+| `session-<id>` | sticky session id, 1-25 alphanumeric/underscore |
+| `lifetime-<min>` | sticky lifetime in minutes; 3 to 1440 |
+| `asn-<n>` | ISP/ASN; unused here, and only valid with a country |
+
+`type-residential` is sent on every rung. The sticky port pins the session type,
+not the IP pool, so an account that also carries datacenter or ISP IPs would
+otherwise serve them here without anything saying so.
+
+### Location tokens carry no separator
+
+Geonode's own examples are `city-newyork` and `state-california`: bare
+concatenation, which is **IPRoyal's rule and the exact opposite of Shifter's**.
+Sending Shifter's `city-jersey_city` here is a 403. The country code is the one
+token documented as uppercase.
+
+### The sticky port pins an IP even with no session flag
+
+Measured on 2026-09-04, and the first thing to know before testing by hand: on a
+sticky port, **omitting `-session-` does not mean "no session"** - the port
+itself holds one peer. Every request to `:10000` without a session id came back
+as the same `174.166.50.198`, including one asking for a city that does not
+exist. A hand test written that way looks like the targeting is being honoured
+when nothing is being resolved at all. Always send a fresh `-session-` when
+probing, which is what the runner does.
+
+With distinct session ids on one port, peers differ as expected, and re-sending
+the same id returns the same IP - verified twice on `70.111.76.134`. That is
+what lets the browser launch on the very session that was probed.
+
+### State and city are mutually exclusive
+
+This is the one constraint Geonode adds that neither other vendor has: *"You
+cannot target both state and city at the same time."* So the ladder's top rung
+is country + city with **no state beside it**:
+
+| tier | username flags |
+| --- | --- |
+| city | `country-US-city-jerseycity-strict-on` |
+| state only | `country-US-state-newjersey-strict-on` |
+| country only | `country-US-strict-off` |
+
+That is the same shape IPRoyal's ladder has, reached for an unrelated reason -
+Shifter is the odd one out in sending country, region and city together. A unit
+test asserts no tier ever emits `-state-` and `-city-` in one username.
+
+> Measured 2026-09-04: the live gateway **accepts** state and city together and
+> answers correctly (Jersey City, `100.1.101.81`), so the documented prohibition
+> is not enforced today. The ladder still sends one or the other - relying on a
+> rule the vendor documents against costs nothing here, since the city rung
+> already resolves on the first probe.
+
+### The country floor must say `strict-off` explicitly
+
+Geonode's documented default is strict, which is the reverse of Shifter, where
+omitting the flag is what produces broadening. So the floor cannot simply leave
+the flag off: it sends `strict-off` outright. The floor exists to always
+complete, and inheriting a strict default there would turn the last rung into
+one more way for the run to fail. `GEONODE_STRICT_TARGETING=false` drops strict
+from the city and state tiers too.
+
+On a strict miss Geonode answers `465`, and the body carries its own error
+shape - `{"proxy-error":"country-fr-asn-3215 target was not found"}`.
+
+### Status codes are Geonode's own
+
+They are numerically unrelated to the other two vendors', so a code read across
+from the Shifter table would be misinterpreted:
+
+| code | meaning |
+| --- | --- |
+| 403 | malformed/unsupported targeting flag (state+city together, unknown place name) |
+| 407 | authentication failure, or this machine's IP is not whitelisted |
+| 411 | account blocked |
+| 464 | destination host/IP/port refused by policy |
+| 465 | no IPs matched the targeting |
+| 466 | plan bandwidth exhausted |
+| 467 | this session's own bandwidth limit reached |
+| 500, 517-569 | Geonode-side error; retry |
+
+Measured against `proxy.geonode.io:10000` on 2026-09-04, and unlike Shifter the
+published codes held up:
+
+| sent | got |
+| --- | --- |
+| `city-jersey_city` (Shifter's underscore form) | `403 Invalid request configuration. Invalid "city"` |
+| `city-notarealcityxyz` + `strict-on` | `465 ... target was not found` |
+| `city-notarealcityxyz` + `strict-off` | `200`, widened to Bradenton |
+| wrong password | `407 Authentication error` |
+
+The `strict-off` row is the one that matters for the ladder: it confirms the
+country floor completes rather than erroring, which is the whole reason the
+floor sends the flag explicitly.
+
+## Shifter (selectable fallback)
+
+Set `PROXY_PROVIDER=shifter`. One gateway, `p.shifter.io:443`, for HTTP(S) and SOCKS5. Port 443 is a port
 number, not an instruction to speak TLS to the proxy: it takes ordinary
 plain-HTTP proxy requests, which is why the raw `http.request` CONNECT in
 `scripts/proxyDiagnostics.js` works against it unchanged.

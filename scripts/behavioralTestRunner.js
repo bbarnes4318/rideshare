@@ -572,9 +572,10 @@ async function runOnce(options) {
       args: core.LAUNCH_ARGS,
       proxy: offline ? undefined : {
         server: 'http://' + core.PROXY_HOST + ':' + core.PROXY_PORT,
-        // Both halves from the selection: Shifter encodes targeting and the
-        // sticky sid in the username, so the account username alone would put
-        // the browser on a different IP than the one that was just verified.
+        // Both halves from the selection: Geonode and Shifter encode targeting
+        // and the sticky session id in the username, so the account username
+        // alone would put the browser on a different IP than the one that was
+        // just verified.
         username: proxySelection.username,
         password: proxySelection.password,
       },

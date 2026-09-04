@@ -434,28 +434,37 @@ city, state, ISP, the targeting tier actually honoured and the match level
 (`city+state`, `state-only`, `no`) all go into the record, and the provider also
 appears as the `proxyProvider` column in the CSV.
 
-The active provider is `PROXY_PROVIDER` — `shifter` (the default) or `iproyal`.
-Shifter encodes its targeting and its sticky `sid` in the **username** rather
-than the password, so each run launches Chromium with the username *and*
-password returned by the session selection, not with the bare account username.
-Its sticky lifetime is `SHIFTER_SESSION_TTL_SECONDS` — seconds, not minutes,
-defaulting to 1800, because the gateway's own default of 120s expires part-way
-through a long-cohort run. See
-[residential-proxy-testing.md](residential-proxy-testing.md) for the flag format
-and the measured error codes (`400` bad flag, `404`/`502`/`503` nothing matched,
-`407` credentials, `509` bandwidth).
+The active provider is `PROXY_PROVIDER` — `geonode` (the default), `shifter` or
+`iproyal`. Geonode and Shifter both encode their targeting and their sticky
+session id in the **username** rather than the password, so each run launches
+Chromium with the username *and* password returned by the session selection, not
+with the bare account username.
+
+Sticky lifetime is named and scaled differently per vendor, which is the easiest
+thing to get wrong when switching: `GEONODE_SESSION_LIFETIME_MINUTES` defaults to
+30 **minutes** (the gateway's own default is 10), while
+`SHIFTER_SESSION_TTL_SECONDS` defaults to 1800 **seconds**. Either way the point
+is the same — the vendor default expires part-way through a long-cohort run.
+
+Geonode also adds one constraint neither other vendor has: a state and a city
+cannot be targeted together, so its top tier is country + city alone. And its
+status codes are its own (`403` bad flag, `465` nothing matched, `407`
+credentials, `466` bandwidth) rather than Shifter's (`400` bad flag,
+`404`/`502`/`503` nothing matched, `407` credentials, `509` bandwidth). See
+[residential-proxy-testing.md](residential-proxy-testing.md) for both flag
+formats and the full code tables.
 
 The **browser** egresses through the proxy. No IP header is set, spoofed or
 forwarded — TrustedForm's script runs client-side, so headers could not affect
 what it observes anyway.
 
-Neither provider offers ZIP-level targeting, only country/region/city. `07302`
+No provider offers ZIP-level targeting, only country/region/city. `07302`
 therefore targets Jersey City, NJ, and the harness records the IP and geo it
-actually got rather than claiming ZIP-level precision. Both gateways silently
-widen the pool when a city has no available peers — Shifter does it unless
-`strict-true` is set, and even then its geo database need not agree with
-ip-api's — which is why the tier actually used, and what ip-api saw, are both
-recorded per run.
+actually got rather than claiming ZIP-level precision. Every gateway silently
+widens the pool when a city has no available peers — Shifter does it unless
+`strict-true` is set, Geonode unless `strict-on` is set, and even then their geo
+databases need not agree with ip-api's — which is why the tier actually used, and
+what ip-api saw, are both recorded per run.
 
 ## Testing the harness itself
 

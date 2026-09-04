@@ -91,20 +91,142 @@ test('buildProxyPassword widens through the documented tiers', () => {
 
 // --- provider selection ----------------------------------------------------
 
-test('the default provider is Shifter, and an unknown one is a hard error', () => {
+test('the default provider is Geonode, and an unknown one is a hard error', () => {
   assert.strictEqual(providers.resolveProvider(undefined).id, 'iproyal', 'env pins iproyal above');
-  assert.strictEqual(providers.resolveProvider(null).id, 'shifter', 'no value at all defaults to shifter');
+  assert.strictEqual(providers.resolveProvider(null).id, 'geonode', 'no value at all defaults to geonode');
+  assert.strictEqual(providers.resolveProvider('geonode').id, 'geonode');
   assert.strictEqual(providers.resolveProvider('shifter').id, 'shifter');
   assert.strictEqual(providers.resolveProvider('IPRoyal').id, 'iproyal');
   assert.throws(() => providers.resolveProvider('brightdata'), /Unknown PROXY_PROVIDER "brightdata"/);
   assert.throws(() => providers.resolveProvider('shifter.io'), /Unknown PROXY_PROVIDER/);
+  // The error lists what IS accepted, so a typo names the alternatives.
+  assert.throws(() => providers.resolveProvider('geonode.io'), /Supported: geonode, shifter, iproyal\./);
 });
 
-test('Shifter and IPRoyal use the gateway defaults they document', () => {
+test('every provider uses the gateway defaults its own docs give', () => {
+  // Geonode's HTTP sticky range is 10000-10900; 9000-9010 is the rotating
+  // range, which would hand out a new IP per request mid-run.
+  assert.strictEqual(providers.geonode.host, 'proxy.geonode.io');
+  assert.strictEqual(providers.geonode.port, 10000);
+  assert.ok(providers.geonode.port >= 10000 && providers.geonode.port <= 10900,
+    'the default port must sit in Geonode\'s sticky HTTP range');
   assert.strictEqual(providers.shifter.host, 'p.shifter.io');
   assert.strictEqual(providers.shifter.port, 443);
   assert.strictEqual(providers.iproyal.host, 'geo.iproyal.com');
   assert.strictEqual(providers.iproyal.port, 12321);
+});
+
+// --- Geonode token normalization -------------------------------------------
+//
+// Geonode's documented examples are "city-newyork" and "state-california":
+// no separator at all, which is IPRoyal's rule and the opposite of Shifter's.
+// A Shifter-shaped slug leaking in here would send "city-jersey_city".
+
+test('geonodeToken strips separators, as Geonode\'s examples do', () => {
+  assert.strictEqual(providers.geonodeToken('Jersey City'), 'jerseycity');
+  assert.strictEqual(providers.geonodeToken('NEW JERSEY'), 'newjersey');
+  assert.strictEqual(providers.geonodeToken('Los Angeles'), 'losangeles');
+  assert.strictEqual(providers.geonodeToken('St. Louis'), 'stlouis');
+  assert.strictEqual(providers.geonodeToken('Winston-Salem'), 'winstonsalem');
+  for (const name of ['Jersey City', 'St. Louis', 'Winston-Salem', '  Saint Louis.  ']) {
+    assert.ok(!/[^a-z0-9]/.test(providers.geonodeToken(name)),
+      name + ' produced a separator Geonode does not accept: ' + providers.geonodeToken(name));
+  }
+});
+
+// --- Geonode credential encoding -------------------------------------------
+
+test('Geonode encodes targeting in the username and leaves the password alone', () => {
+  const location = core.getZipTarget('07302');
+  const creds = providers.geonode.buildCredentials({
+    username: 'geonode_jimbosky35', password: 'secret', location, session: null,
+  });
+  assert.strictEqual(
+    creds.username,
+    'geonode_jimbosky35-type-residential-country-US-city-jerseycity-strict-on',
+  );
+  assert.strictEqual(creds.password, 'secret', 'the password half never carries targeting');
+});
+
+test('Geonode never sends a state and a city together', () => {
+  // The one hard constraint this vendor adds: "You cannot target both state and
+  // city at the same time." Sending both is a 403, so no tier may do it.
+  const location = core.getZipTarget('07302');
+  for (const tier of providers.geonode.tiers) {
+    const username = providers.geonode.buildCredentials({
+      username: 'geonode_jimbosky35', password: 'secret', location, session: null, tier,
+    }).username;
+    assert.ok(!(username.includes('-state-') && username.includes('-city-')),
+      'tier "' + tier.name + '" sent state and city together: ' + username);
+  }
+});
+
+test('Geonode widens through the same three rungs as the other vendors', () => {
+  const location = core.getZipTarget('07302');
+  const at = (i) => providers.geonode.buildCredentials({
+    username: 'geonode_jimbosky35', password: 'secret', location, session: null,
+    tier: providers.geonode.tiers[i],
+  }).username;
+  assert.strictEqual(at(0), 'geonode_jimbosky35-type-residential-country-US-city-jerseycity-strict-on');
+  assert.strictEqual(at(1), 'geonode_jimbosky35-type-residential-country-US-state-newjersey-strict-on');
+  // The country floor must always complete. Geonode's default is strict, so
+  // unlike Shifter the floor cannot just omit the flag - it has to say off.
+  assert.strictEqual(at(2), 'geonode_jimbosky35-type-residential-country-US-strict-off');
+  assert.ok(at(2).includes('-strict-off'), 'the floor must disable strict explicitly, not by omission');
+  assert.strictEqual(providers.geonode.tiers.length, providers.shifter.tiers.length);
+});
+
+test('Geonode emits lifetime only alongside session, and pins the run for 30m', () => {
+  const location = core.getZipTarget('07302');
+  const lifetime = providers.geonode.sessionLifetimeMinutes;
+  assert.strictEqual(lifetime, 30, 'the gateway default of 10m expires mid-run');
+  assert.ok(lifetime >= 3 && lifetime <= 1440, 'Geonode accepts 3 minutes to 24 hours');
+
+  const withSession = providers.geonode.buildCredentials({
+    username: 'geonode_jimbosky35', password: 'secret', location, session: 'nlc7fq2xk1',
+  }).username;
+  assert.strictEqual(
+    withSession,
+    'geonode_jimbosky35-type-residential-country-US-city-jerseycity-strict-on-session-nlc7fq2xk1-lifetime-' + lifetime,
+  );
+
+  for (const tier of providers.geonode.tiers) {
+    const username = providers.geonode.buildCredentials({
+      username: 'geonode_jimbosky35', password: 'secret', location, session: null, tier,
+    }).username;
+    assert.ok(!username.includes('-lifetime-'), 'lifetime without session is meaningless: ' + username);
+    assert.ok(!username.includes('-session-'), username);
+  }
+});
+
+test('the session ids funnelCore generates are valid Geonode session ids', () => {
+  // Geonode accepts 1-25 characters, alphanumeric or underscore. funnelCore
+  // builds 'nlc' + a base36 slice, one per probe attempt.
+  for (let i = 0; i < 200; i += 1) {
+    const session = 'nlc' + Math.random().toString(36).slice(2, 10);
+    assert.match(session, /^[A-Za-z0-9_]{1,25}$/, 'invalid Geonode session id: ' + session);
+  }
+});
+
+test('Geonode failure text names its own status codes, not another vendor\'s', () => {
+  assert.match(providers.geonode.describeFailure({ statusCode: 407 }), /GEONODE_PROXY_USERNAME/);
+  assert.match(providers.geonode.describeFailure({ statusCode: 403 }), /state and a city sent together/);
+  assert.match(providers.geonode.describeFailure({ statusCode: 465 }), /No Proxies Available/);
+  assert.match(providers.geonode.describeFailure({ statusCode: 466 }), /Bandwidth Exhausted/);
+  assert.match(providers.geonode.describeFailure({ statusCode: 467 }), /until the session expires/);
+  assert.match(providers.geonode.describeFailure({ statusCode: 411 }), /Account Blocked/);
+  assert.match(providers.geonode.describeFailure({ statusCode: 464 }), /Connection Blocked/);
+  assert.match(providers.geonode.describeFailure({ statusCode: 523 }), /Geonode-side error/);
+  assert.match(providers.geonode.describeFailure({ error: 'ECONNREFUSED' }), /Could not reach/);
+  // The out-of-peers code differs per vendor: 465 here, 503/502/404 on Shifter.
+  // Geonode never sends those, so they must fall through to the generic line
+  // rather than repeating Shifter's story about a code this gateway never uses.
+  assert.strictEqual(providers.geonode.describeFailure({ statusCode: 503 }), 'Geonode returned HTTP 503');
+  assert.ok(!/no residential IPs matched/i.test(providers.geonode.describeFailure({ statusCode: 503 })));
+  // 402 is IPRoyal's balance code and means nothing here either.
+  assert.ok(!/balance/i.test(providers.geonode.describeFailure({ statusCode: 402 })));
+  // An undefined status must not slip into the 517-569 server-error range.
+  assert.match(providers.geonode.describeFailure({ error: 'ETIMEDOUT' }), /^Could not reach/);
 });
 
 // --- Shifter token normalization -------------------------------------------

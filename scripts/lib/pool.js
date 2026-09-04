@@ -4,7 +4,8 @@
 // A small bounded worker pool, for running batch rows several at a time.
 //
 // Every row of a batch is already independent: it launches its own browser
-// process, selects its own IPRoyal session, and writes its own forensic record.
+// process, selects its own residential session, and writes its own forensic
+// record.
 // Nothing was shared between rows except the `for` loop that ran them, so the
 // wall clock was simply the sum of every row's 30-60 seconds - hours for a few
 // hundred rows, most of it spent waiting on a network round trip or on a

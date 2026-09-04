@@ -97,8 +97,9 @@ async function main() {
     proxy: {
       server: 'http://' + PROXY_HOST + ':' + PROXY_PORT,
       // Both halves come from the selection, never the bare account username:
-      // Shifter carries its targeting and sticky sid in the username, so a
-      // static one here would silently egress from an unrelated city.
+      // Geonode and Shifter carry their targeting and sticky session id in the
+      // username, so a static one here would silently egress from an unrelated
+      // city.
       username: selection.username,
       password: selection.password,
     },

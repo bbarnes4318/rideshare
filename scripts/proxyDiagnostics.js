@@ -11,10 +11,12 @@ const http = require('http');
  * signal available: 200 means the tunnel is up, anything else is refused and
  * the active provider's describeFailure() explains it.
  *
- * Both vendors listen for plain HTTP proxy requests - Shifter on port 443,
+ * Every vendor here listens for plain HTTP proxy requests - Shifter on port 443,
  * which is a port number and not an instruction to speak TLS to the proxy.
  * Verified against p.shifter.io:443 on 2026-09-02: this raw http.request
  * CONNECT gets a 200 status line, exactly as it does from IPRoyal on 12321.
+ * Geonode is documented as HTTP/HTTPS on its sticky range (10000-10900) and is
+ * driven the same way, though it has not been measured here yet.
  */
 function probeProxyConnect({ host, port, username, password, target, timeoutMs = 30000 }) {
   return new Promise((resolve) => {
@@ -57,11 +59,11 @@ function probeProxyConnect({ host, port, username, password, target, timeoutMs =
 /**
  * Best-effort geolocation of the observed egress IP.
  *
- * Both gateways silently widen the pool when a requested city has no available
- * peers - Shifter does it unless strict-true is set, and even then its geo
- * database need not agree with ip-api's - so the only way to know where the
- * session actually landed is to look up the IP that came back. Never throws:
- * a failed lookup must not fail the submission run.
+ * Every gateway silently widens the pool when a requested city has no available
+ * peers - Shifter does it unless strict-true is set, Geonode unless strict-on
+ * is, and even then their geo databases need not agree with ip-api's - so the
+ * only way to know where the session actually landed is to look up the IP that
+ * came back. Never throws: a failed lookup must not fail the submission run.
  */
 function lookupIpGeo(ip, timeoutMs = 10000) {
   return new Promise((resolve) => {

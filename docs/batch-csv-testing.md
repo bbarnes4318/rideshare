@@ -6,7 +6,7 @@ already exists in this repository — it does not reimplement or replace it:
 
 ```
 fresh browser context
-  → IPRoyal residential proxy, geo-selected from that row's ZIP
+  → residential proxy (Geonode by default), geo-selected from that row's ZIP
   → the real funnel at quotes.nationallifecoverage.org
   → TrustedForm initializes normally
   → the real form completed with real browser events
@@ -198,7 +198,7 @@ that took about five hours one-at-a-time takes closer to a hundred minutes at
 three, and under an hour at five.
 
 Nothing about an individual row changes. Each still gets its own browser
-process, its own IPRoyal sticky session and its own certificate, and still
+process, its own residential sticky session and its own certificate, and still
 closes fully when it is done; no cookies, storage or proxy peer is shared
 between rows, concurrent or not. That isolation is exactly what makes them safe
 to overlap.
@@ -231,8 +231,8 @@ firstName,lastName,phone,email,address,city,state,zipCode,birthdate,gender,ipAdd
 ```
 
 - `ipAddress` — the egress IP the browser was **observed** to have, not the one
-  requested from IPRoyal. Where the two differ, both are kept in the forensic
-  record (`proxy.ip` versus the selected session).
+  requested from the proxy provider. Where the two differ, both are kept in the
+  forensic record (`proxy.ip` versus the selected session).
 - `trustedFormURL` — the certificate that browser session actually produced.
 - `datePosted` — execution date as `MM/DD/YYYY`.
 

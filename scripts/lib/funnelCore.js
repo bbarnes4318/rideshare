@@ -35,6 +35,9 @@ const PROXY_PORT = PROXY_PROVIDER.port;
 const IP_CHECK_URL = process.env.PROXY_IP_CHECK_URL || 'https://ipv4.icanhazip.com';
 const SESSION_PROBE_URL = process.env.PROXY_SESSION_PROBE_URL || 'http://ipv4.icanhazip.com';
 const SESSION_ATTEMPTS = PROXY_PROVIDER.sessionAttempts;
+// IPRoyal's lifetime specifically, and only reachable through buildProxyPassword
+// below. Geonode has its own minutes value and Shifter counts in seconds; both
+// read theirs from the provider object, so nothing else should consult this.
 const SESSION_LIFETIME_MINUTES = Number(process.env.IPROYAL_SESSION_LIFETIME_MINUTES || 30);
 
 const zipcodes = require('zipcodes');
@@ -84,10 +87,11 @@ function getZipTarget(zip) {
 
 /**
  * Build the auth pair the active provider needs for one targeted, sticky
- * session. BOTH halves matter: IPRoyal encodes targeting in the password and
- * Shifter encodes it in the username, so a caller that keeps a static username
- * and uses only the password gets an untargeted Shifter session that still
- * succeeds - with an IP from the wrong city and no error anywhere.
+ * session. BOTH halves matter: IPRoyal encodes targeting in the password, while
+ * Geonode and Shifter encode it in the username. A caller that keeps a static
+ * username and uses only the password therefore gets an untargeted Geonode or
+ * Shifter session that still succeeds - with an IP from the wrong city and no
+ * error anywhere.
  */
 function buildProxyCredentials(username, basePassword, location, session, tier = TARGETING_TIERS[0]) {
   return PROXY_PROVIDER.buildCredentials({
@@ -111,8 +115,10 @@ async function selectResidentialSession({ host, port, username, basePassword, lo
     let anyEgress = false;
     for (let attempt = 1; attempt <= SESSION_ATTEMPTS; attempt += 1) {
       // Unique per attempt, and therefore per row: Shifter documents that a
-      // sid must not be shared across concurrent workflows, and a batch runs
-      // up to 8 rows at once.
+      // sid must not be shared across concurrent workflows, and Geonode that a
+      // reused session id resolves to the *existing* sticky session rather than
+      // a new one. A batch runs up to 8 rows at once. The id stays within
+      // Geonode's 1-25 alphanumeric/underscore limit; test/unit.js asserts it.
       const session = 'nlc' + Math.random().toString(36).slice(2, 10);
       const creds = buildProxyCredentials(username, basePassword, location, session, tier);
       const result = await fetchThroughProxy({
@@ -168,7 +174,8 @@ async function selectResidentialSession({ host, port, username, basePassword, lo
  * Account check before any browser starts, on the widest tier so that a
  * momentarily empty city cannot be mistaken for a broken account. The failure
  * text is the provider's, because the status codes mean different things to
- * each of them (IPRoyal 402 = no balance; Shifter 400 = bad targeting flag).
+ * each of them (Geonode 465 = nothing matched; IPRoyal 402 = no balance;
+ * Shifter 400 = bad targeting flag).
  */
 async function preflightProxy({ host, port, username, basePassword, location, ipCheckUrl }) {
   const probeTarget = new URL(ipCheckUrl || IP_CHECK_URL);
