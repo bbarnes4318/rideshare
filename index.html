@@ -20,22 +20,78 @@
         background-color: #f8fafc;
       }
 
+      /* These were written as @apply directives, but the Tailwind Play CDN only
+         expands @apply inside <style type="text/tailwindcss">. In a plain <style>
+         the browser discards them as invalid, so the rules below are the same
+         declarations written out literally with Tailwind's default palette and
+         scale. Keep them plain CSS: no build step, and nothing here depends on
+         the CDN processing @apply. */
+
       /* Modern Input Styling - Orange Focus */
       .modern-input {
-        @apply w-full px-4 py-3 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 transition-all duration-200 ease-in-out;
+        width: 100%;
+        padding: 0.75rem 1rem; /* py-3 px-4 */
+        background-color: #ffffff;
+        border: 1px solid #d1d5db; /* gray-300 */
+        border-radius: 0.5rem; /* rounded-lg */
+        color: #111827; /* gray-900 */
+        transition: all 200ms ease-in-out;
+      }
+      .modern-input::placeholder {
+        color: #9ca3af; /* gray-400 */
       }
       .modern-input:focus {
-        @apply outline-none border-orange-500 ring-4 ring-orange-500/10 shadow-sm;
+        outline: 2px solid transparent;
+        outline-offset: 2px;
+        border-color: #f97316; /* orange-500 */
+        /* ring-4 ring-orange-500/10, then shadow-sm */
+        box-shadow:
+          0 0 0 4px rgba(249, 115, 22, 0.1),
+          0 1px 2px 0 rgba(0, 0, 0, 0.05);
       }
 
       /* Label Styling */
       .modern-label {
-        @apply block text-sm font-medium text-gray-700 mb-1.5 ml-1;
+        display: block;
+        font-size: 0.875rem; /* text-sm */
+        line-height: 1.25rem;
+        font-weight: 500; /* font-medium */
+        color: #374151; /* gray-700 */
+        margin-bottom: 0.375rem; /* mb-1.5 */
+        margin-left: 0.25rem; /* ml-1 */
       }
 
       /* Button Styling - Brand Orange */
       .submit-btn {
-        @apply w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 px-6 rounded-lg transition-all duration-200 shadow-lg hover:shadow-orange-500/30 flex items-center justify-center space-x-2 transform active:scale-[0.98];
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        padding: 1rem 1.5rem; /* py-4 px-6 */
+        border: none;
+        border-radius: 0.5rem; /* rounded-lg */
+        background-color: #ea580c; /* orange-600 */
+        color: #ffffff;
+        font-weight: 700; /* font-bold */
+        cursor: pointer;
+        transition: all 200ms;
+        /* shadow-lg */
+        box-shadow:
+          0 10px 15px -3px rgba(0, 0, 0, 0.1),
+          0 4px 6px -4px rgba(0, 0, 0, 0.1);
+      }
+      .submit-btn > * + * {
+        margin-left: 0.5rem; /* space-x-2 */
+      }
+      .submit-btn:hover {
+        background-color: #c2410c; /* orange-700 */
+        /* hover:shadow-orange-500/30 */
+        box-shadow:
+          0 10px 15px -3px rgba(249, 115, 22, 0.3),
+          0 4px 6px -4px rgba(249, 115, 22, 0.3);
+      }
+      .submit-btn:active {
+        transform: scale(0.98);
       }
 
       /* Card Styling */
@@ -599,13 +655,17 @@
         const form = document.getElementById("quote-form");
         const formData = new FormData(form);
 
+        // The date input hands us "yyyy-mm-dd". Never pass that to new Date():
+        // it is parsed as UTC midnight, and getMonth()/getDate() then read it
+        // back in local time, which moves the birth date one day earlier for
+        // every visitor west of UTC. Reassemble from the string parts instead,
+        // so no Date object is involved and no timezone can shift the value.
         const formatDate = (dateStr) => {
           if (!dateStr) return "";
-          const date = new Date(dateStr);
-          const month = String(date.getMonth() + 1).padStart(2, "0");
-          const day = String(date.getDate()).padStart(2, "0");
-          const year = date.getFullYear();
-          return `${month}/${day}/${year}`;
+          const parts = String(dateStr).trim().split("-");
+          if (parts.length !== 3) return "";
+          const [year, month, day] = parts;
+          return `${month.padStart(2, "0")}/${day.padStart(2, "0")}/${year}`;
         };
 
         const payload = {

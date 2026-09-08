@@ -4,6 +4,37 @@ const useragent = require('useragent');
 const zipcodes = require('zipcodes');
 const Submission = require('../models/Submission');
 
+// Build a Date at LOCAL midnight from a date string. A bare 'yyyy-mm-dd' handed
+// to new Date() is parsed as UTC midnight, so reading it back anywhere behind
+// UTC yields the previous day; both supported shapes are therefore assembled
+// from their parts. Module scope so the catch-block fallback can reach it too.
+const parseDate = (dateStr) => {
+  if (!dateStr) return new Date();
+  try {
+    const str = String(dateStr).trim();
+
+    // MM/DD/YYYY -- what the quote form posts
+    const slash = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (slash) {
+      const date = new Date(Number(slash[3]), Number(slash[1]) - 1, Number(slash[2]));
+      if (!isNaN(date.getTime())) return date;
+    }
+
+    // YYYY-MM-DD -- what a raw date input would post
+    const dash = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (dash) {
+      const date = new Date(Number(dash[1]), Number(dash[2]) - 1, Number(dash[3]));
+      if (!isNaN(date.getTime())) return date;
+    }
+
+    const date = new Date(str);
+    if (!isNaN(date.getTime())) return date;
+    return new Date(); // fallback
+  } catch (error) {
+    return new Date(); // fallback
+  }
+};
+
 // Enhanced form handler that captures additional data
 const formHandler = async (req, res) => {
   try {
@@ -79,25 +110,6 @@ const formHandler = async (req, res) => {
     if (submittedZip && !zipLookup) {
       console.warn('Zip code did not resolve to a city/state:', submittedZip);
     }
-    
-    // Parse dates
-    const parseDate = (dateStr) => {
-      if (!dateStr) return new Date();
-      try {
-        // Handle MM/DD/YYYY format
-        const parts = dateStr.split('/');
-        if (parts.length === 3) {
-          const date = new Date(parts[2], parts[0] - 1, parts[1]);
-          if (!isNaN(date.getTime())) return date;
-        }
-        // Try parsing as regular date
-        const date = new Date(dateStr);
-        if (!isNaN(date.getTime())) return date;
-        return new Date(); // fallback
-      } catch (error) {
-        return new Date(); // fallback
-      }
-    };
     
     // Normalize a Yes/No answer coming from the form
     const yesNo = (val) => {
@@ -245,7 +257,7 @@ const formHandler = async (req, res) => {
           state: basicData.state || basicZipLookup?.state,
           zip: basicData.zip,
           gender: basicData.gender,
-          date_of_birth: new Date(basicData.date_of_birth),
+          date_of_birth: parseDate(basicData.date_of_birth),
           coverage_amount: basicData.coverage_amount,
           ip_address: req.ip || '127.0.0.1',
           user_agent: req.headers['user-agent'] || '',
