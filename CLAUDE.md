@@ -4,7 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a life insurance quote landing page for NationalLifeCoverage.org (served at quotes.nationallifecoverage.org). It collects prospect information through a single-page form and submits it to an API endpoint, backed by an Express/MongoDB analytics dashboard.
+This is a **self-hosted** life insurance quote landing page for
+NationalLifeCoverage.org. It collects prospect information through a single-page
+form and submits it to an API endpoint, backed by an Express/MongoDB analytics
+dashboard.
+
+> **This repo is NOT what `quotes.nationallifecoverage.org` serves.** That
+> hostname redirects through `dwizr.com` to a hosted AngularJS funnel at
+> `/fv3/nationallifecoverage/1051/` (`ng-app="wisdomFormFlows"`, a 16-step
+> hash-routed wizard) owned by the affiliate network, not by this repository.
+> Real consumer leads and the TrustedForm certificates that matter come from
+> **that** funnel. This repo's `index.html` is served on the Hetzner box and
+> receives no organic traffic.
+>
+> Before any TrustedForm, consent or lead-capture work, read
+> `docs/behavioral-testing.md` ("Selectors: which ones are real") to confirm
+> which of the two pages the task targets. Note that `curl -I` of the public
+> hostname shows only the first hop to `dwizr.com` and makes the funnel look
+> parked; follow redirects with a real browser UA to reach it.
 
 ## Architecture
 
@@ -13,7 +30,9 @@ This is a life insurance quote landing page for NationalLifeCoverage.org (served
 - **No build system**: Pure HTML/CSS/JavaScript with external CDN dependencies
 - **Styling**: Uses Tailwind CSS via CDN
 - **Form handling**: Vanilla JavaScript with fetch API for form submission
-- **Third-party integrations**: TrustedForm for compliance tracking
+- **Third-party integrations**: TrustedForm for compliance tracking (this page
+  runs it with `use_tagged_consent=true` and `data-tf-element-role` tagging; the
+  affiliate funnel above does not yet -- see the spec handed to the network)
 
 ## Development Commands
 
