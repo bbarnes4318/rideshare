@@ -14,24 +14,6 @@
       rel="stylesheet"
     />
 
-    <script type="text/javascript">
-      (function () {
-        var tf = document.createElement("script");
-        tf.type = "text/javascript";
-        tf.async = true;
-        tf.src =
-          ("https:" == document.location.protocol ? "https" : "http") +
-          "://api.trustedform.com/trustedform.js?field=xxTrustedFormCertUrl&use_tagged_consent=true&l=" +
-          new Date().getTime() +
-          Math.random();
-        var s = document.getElementsByTagName("script")[0];
-        s.parentNode.insertBefore(tf, s);
-      })();
-    </script>
-    <noscript>
-      <img src="https://api.trustedform.com/ns.gif" />
-    </noscript>
-
     <style>
       body {
         font-family: "Inter", sans-serif;
@@ -95,6 +77,7 @@
             Secure & Confidential
           </div>
           <a
+            name="get-my-quote"
             href="#quote-form-section"
             class="bg-black text-white px-4 py-2 rounded-md font-medium hover:bg-gray-800 transition-colors"
           >
@@ -233,6 +216,7 @@
 
                 <form
                   id="quote-form"
+                  data-tf-element-role="offer"
                   onsubmit="return handleSubmit(event);"
                   class="space-y-5"
                 >
@@ -493,7 +477,13 @@
                   />
 
                   <div class="pt-4">
-                    <button type="submit" id="submit-button" class="submit-btn">
+                    <button
+                      type="submit"
+                      id="submit-button"
+                      name="submit-button"
+                      data-tf-element-role="submit"
+                      class="submit-btn"
+                    >
                       <span>See My Rates</span>
                       <svg
                         class="w-5 h-5"
@@ -511,11 +501,14 @@
                     </button>
                   </div>
 
-                  <div class="bg-gray-50 p-3 rounded-lg mt-4">
+                  <div class="bg-gray-50 p-3 rounded-lg !mt-2">
                     <p
+                      data-tf-element-role="consent-language"
                       class="text-[10px] text-gray-500 text-center leading-tight"
                     >
-                      By clicking "See My Rates", you certify that you are
+                      By clicking "<span data-tf-element-role="submit-text"
+                        >See My Rates</span
+                      >", you certify that you are
                       at least 18 years old and agree to our Terms & Privacy
                       Policy. You agree to receive marketing calls/texts from us
                       or our partners at the number provided, even if on a Do
@@ -679,5 +672,24 @@
         return false;
       }
     </script>
+    <!-- TrustedForm -->
+    <script type="text/javascript">
+      (function () {
+        var tf = document.createElement("script");
+        tf.type = "text/javascript";
+        tf.async = true;
+        tf.src =
+          ("https:" == document.location.protocol ? "https" : "http") +
+          "://api.trustedform.com/trustedform.js?field=xxTrustedFormCertUrl&use_tagged_consent=true&l=" +
+          new Date().getTime() +
+          Math.random();
+        var s = document.getElementsByTagName("script")[0];
+        s.parentNode.insertBefore(tf, s);
+      })();
+    </script>
+    <noscript>
+      <img src="https://api.trustedform.com/ns.gif" />
+    </noscript>
+    <!-- End TrustedForm -->
   </body>
 </html>
