@@ -59,17 +59,35 @@ gets no submit listener, and it matches no entry in `Cr` unless it carries
 
 ## What the affiliate funnel's submit control is
 
-Recovered from the DOM snapshot inside an existing production capture
-(`test-reports/short-01-20260901T034929Z-20kz9k.capture.json`):
+Read off the **live** funnel on 2026-09-09, by walking it to
+`#/verify-information` and stopping there (no lead created):
 
 ```html
 <a class="btn btn-next btn-submit" href="#/verify-information"
-   data-ng-click="vm.submitData()" data-submit-btn>Submit</a>
+   data-ng-click="vm.submitData()" data-submit-btn="">Submit</a>
 ```
 
 An `<a>`, with no `data-tf-element-role="submit"`, driving an Angular handler.
-It matches none of the eight selectors above, and there is no form submission
-for the `<form>` path to see. Decoding that capture's event stream:
+It matches none of the eight selectors above, so the **click** path never fires.
+
+There *is* a real `<form id="verifyInfoForm" name="vm.verifyInfoForm">` around
+the contact fields, so TrustedForm does attach its `submit` listener to it. That
+listener never runs either: the anchor is a hash navigation plus
+`vm.submitData()`, so nothing ever submits the form. Both of the SDK's two paths
+to `fs` are dead — one for want of an attribute, the other for want of a
+submission.
+
+Also confirmed live on the same run:
+
+* the loader carries **no `use_tagged_consent`**, so the tagged-consent feature
+  ActiveProspect recommended is not enabled on the funnel at all;
+* there are **zero `data-tf-element-role` attributes** anywhere on the page,
+  contact step included;
+* certificates *are* minting normally — the contact step's
+  `input[name=xxTrustedFormCertUrl]` was populated.
+
+Decoding an existing production capture's event stream
+(`test-reports/short-01-20260901T034929Z-20kz9k.capture.json`):
 
 ```
 form_submitted              : false
@@ -157,14 +175,22 @@ session was never recorded and the run must be repeated.
 ## What still has to happen
 
 The fix belongs on the affiliate funnel, and this repository cannot deploy it.
-The change needed there is one of:
+Either change is sufficient on its own:
 
-* add `data-tf-element-role="submit"` to the `<a ... data-submit-btn>Submit</a>`
-  control, which is enough on its own — `a[data-tf-element-role=submit]` is in
-  the selector list; or
-* wrap the contact step in a real `<form>` and submit it.
+* **add `data-tf-element-role="submit"`** to the
+  `<a ... data-submit-btn>Submit</a>` control. `a[data-tf-element-role=submit]`
+  is already in the SDK's selector list, so this needs no other change. This is
+  the smaller ask.
+* **or** have `vm.submitData()` submit `#verifyInfoForm` (e.g.
+  `form.requestSubmit()`) instead of only navigating, so the `submit` listener
+  TrustedForm has already attached to that form actually fires.
 
-Both are one-line changes on their side. Hand them the table above and the
-decoded capture; the claim is not "your funnel might be misconfigured" but
-"your Submit control matches none of the eight selectors your own SDK uses, and
-here is the event stream showing `cl` present and `fs` absent".
+Separately, and independently of the submission event, their loader is missing
+`use_tagged_consent=true` and the page carries no `data-tf-element-role`
+attributes at all — so the Consent Tags ActiveProspect asked for are not
+implemented on the funnel either.
+
+Hand them the table above and the decoded capture. The claim is not "your funnel
+might be misconfigured" but "your Submit control matches none of the eight
+selectors your own SDK uses, nothing ever submits `#verifyInfoForm`, and here is
+the event stream showing `cl` present and `fs` absent".
