@@ -35,6 +35,76 @@ const parseDate = (dateStr) => {
   }
 };
 
+// Credential for the upstream lead API, read from the environment.
+//
+// This used to arrive as the browser's `Authorization` header: index.html
+// btoa()'d a Basic user/password into every page it served. Nothing in this
+// application ever verified it -- /api-proxy/ has no auth middleware -- it was
+// only ever forwarded to ORIGINAL_API_URL, so publishing it to every visitor
+// protected nothing and exposed the upstream password. It lives in the server
+// environment now. A native browser form POST cannot set a request header at
+// all, which is the other reason this had to move.
+//
+// Set ORIGINAL_API_AUTH to a complete header value ("Basic <base64>"), or set
+// ORIGINAL_API_USERNAME / ORIGINAL_API_PASSWORD and let this build it.
+const upstreamAuthHeader = () => {
+  if (process.env.ORIGINAL_API_AUTH) {
+    return { Authorization: process.env.ORIGINAL_API_AUTH };
+  }
+  const user = process.env.ORIGINAL_API_USERNAME;
+  const pass = process.env.ORIGINAL_API_PASSWORD;
+  if (user && pass) {
+    return { Authorization: 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64') };
+  }
+  return {};
+};
+
+// True when the POST came from a browser performing the form's own submission
+// rather than from fetch(). A native submit sends the form encoding and asks
+// for a document back; the AJAX path sends JSON and parses JSON. Detected from
+// the request itself so both variants can share this one endpoint -- Step 6 of
+// the A/B plan explicitly rules out a duplicate route.
+const isNativeFormPost = (req) => {
+  const type = String(req.headers['content-type'] || '');
+  if (/application\/json/i.test(type)) return false;
+  if (/application\/x-www-form-urlencoded|multipart\/form-data/i.test(type)) return true;
+  return /text\/html/i.test(String(req.headers.accept || ''));
+};
+
+const escapeHtml = (value) =>
+  String(value).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+
+// The confirmation document the native variant lands on.
+//
+// It is deliberately inert: no TrustedForm loader, no form, no script. The
+// certificate belongs to the page that was submitted, and a second TrustedForm
+// session here would start a second certificate for the same lead.
+const confirmationPage = (submissionId) => `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Request received</title>
+    <style>
+      body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0;
+             min-height: 100vh; display: grid; place-items: center; background: #f8fafc; color: #0f172a; }
+      main { max-width: 30rem; padding: 2rem; text-align: center; background: #fff;
+             border: 1px solid #e2e8f0; border-radius: .75rem; }
+      p.id { color: #64748b; font-size: .75rem; margin-top: 1.5rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 id="response-message">&#10003; Request received</h1>
+      <p>A licensed agent will call you shortly with your rates.</p>
+      <p class="id">Reference: ${escapeHtml(submissionId)}</p>
+    </main>
+  </body>
+</html>
+`;
+
 // Enhanced form handler that captures additional data
 const formHandler = async (req, res) => {
   try {
@@ -217,10 +287,10 @@ const formHandler = async (req, res) => {
     // If there's an original external API, forward the request
     if (process.env.ORIGINAL_API_URL) {
       try {
-        const forwardResponse = await axios.post(process.env.ORIGINAL_API_URL, req.body, {
+        const forwardResponse = await axios.post(process.env.ORIGINAL_API_URL, [formData], {
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': req.headers.authorization
+            ...upstreamAuthHeader(),
           },
           timeout: 10000
         });
@@ -230,13 +300,22 @@ const formHandler = async (req, res) => {
       }
     }
     
-    // Return success response
-    res.json({
-      status: 'SUCCESS',
-      message: 'Submission received successfully',
-      submissionId: submission._id,
-      ...originalResponse
-    });
+    // Return success response.
+    //
+    // The AJAX variant parses JSON. The native variant is a browser navigating,
+    // so it gets a document; anything else renders as raw JSON in the viewport.
+    // Both paths are the same submission through the same endpoint -- only the
+    // representation of the reply differs.
+    if (isNativeFormPost(req)) {
+      res.status(200).type('html').send(confirmationPage(submission._id));
+    } else {
+      res.json({
+        status: 'SUCCESS',
+        message: 'Submission received successfully',
+        submissionId: submission._id,
+        ...originalResponse
+      });
+    }
     
   } catch (error) {
     console.error('Form handler error:', error);
@@ -271,11 +350,19 @@ const formHandler = async (req, res) => {
       }
     }
     
-    res.status(500).json({
-      status: 'ERROR',
-      message: 'Submission failed. Please try again.',
-      error: error.message // Always show error for debugging
-    });
+    if (isNativeFormPost(req)) {
+      res.status(500).type('html').send(
+        '<!doctype html><meta charset="utf-8"><title>Submission failed</title>' +
+        '<p id="response-message">Submission failed. Please try again.</p>' +
+        '<p>' + escapeHtml(error.message) + '</p>'
+      );
+    } else {
+      res.status(500).json({
+        status: 'ERROR',
+        message: 'Submission failed. Please try again.',
+        error: error.message // Always show error for debugging
+      });
+    }
   }
 };
 

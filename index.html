@@ -272,8 +272,9 @@
 
                 <form
                   id="quote-form"
+                  method="POST"
+                  action="/api-proxy/"
                   data-tf-element-role="offer"
-                  onsubmit="return handleSubmit(event);"
                   class="space-y-5"
                 >
                   <div>
@@ -633,6 +634,25 @@
     </footer>
 
     <script>
+      // Submission mechanism, chosen per page load.
+      //
+      //   ajax   (default, production behaviour): the submit event is
+      //          intercepted, cancelled with preventDefault(), and the payload
+      //          is POSTed as JSON with fetch().
+      //   native (?submission-mode=native): no listener is attached at all, so
+      //          the browser performs the form's own POST to action="/api-proxy/".
+      //
+      // The two variants share this file, the markup, the fields, the consent
+      // text, the TrustedForm tags and the TrustedForm SDK. The ONLY difference
+      // is whether the submit event is cancelled and re-issued from JavaScript.
+      // That is the single variable the ActiveProspect A/B test is isolating;
+      // see docs/trustedform-submission-event.md.
+      const SUBMISSION_MODE =
+        new URLSearchParams(window.location.search).get("submission-mode") ===
+        "native"
+          ? "native"
+          : "ajax";
+
       let isSubmitting = false;
 
       function handleSubmit(event) {
@@ -694,13 +714,17 @@
           ownerid: "005TR00000CDuezYAD",
         };
 
+        // No Authorization header. The Basic credential that used to be
+        // btoa()'d here was never checked by /api-proxy/ -- it was forwarded
+        // verbatim to ORIGINAL_API_URL -- so shipping it to every visitor
+        // bought nothing and leaked the upstream password. The server now
+        // supplies it from the environment (middleware/formHandler.js), which
+        // is also what makes the native variant possible: a browser form POST
+        // cannot set a request header.
         fetch("/api-proxy/", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization:
-              "Basic " +
-              btoa("Over.The.World.Sales:STD8 7CNS URtl fHof uH3f 3VZJ"),
           },
           body: JSON.stringify([payload]),
         })
@@ -730,6 +754,15 @@
           });
 
         return false;
+      }
+
+      // In native mode nothing is attached, deliberately. Any listener here --
+      // even one that only toggles the button -- is a JavaScript participant in
+      // the submit event, and the point of the variant is that there is none.
+      if (SUBMISSION_MODE === "ajax") {
+        document
+          .getElementById("quote-form")
+          .addEventListener("submit", handleSubmit);
       }
     </script>
     <!-- TrustedForm -->

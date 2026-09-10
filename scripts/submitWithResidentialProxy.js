@@ -3,6 +3,7 @@
 require('dotenv').config();
 
 const { chromium } = require('playwright-core');
+const { LISTENER_PROBE, readListenerProbe } = require('./lib/listenerProbe');
 const {
   PROXY_PROVIDER,
   PROXY_HOST,
@@ -18,6 +19,9 @@ const {
   preflightProxy,
   resolveBrowserPath,
   lookupIpGeo,
+  attachTrustedFormCapture,
+  writeCapture,
+  certIdFromUrl,
 } = require('./lib/funnelCore');
 
 // This runner drives the Express/index.html app in THIS repository, whose form
@@ -28,6 +32,34 @@ const {
 // sticky-session selection are the shared ones in lib/funnelCore.js, so this
 // runner can no longer drift away from the runner that is actually in use.
 const TARGET_URL = process.env.TRUSTEDFORM_TARGET_URL || 'https://quotes.nationallifecoverage.org/';
+
+// Which submission mechanism the page should use for this run.
+//
+//   ajax   (default) - index.html cancels the submit event and POSTs JSON with
+//                      fetch(). This is production behaviour and the control.
+//   native           - no JavaScript touches the submit event; the browser
+//                      performs the form's own POST to action="/api-proxy/".
+//
+// The page picks its mechanism from ?submission-mode, so both variants are the
+// same document, the same fields, the same consent text, the same TrustedForm
+// tags and the same SDK. Only the submit event differs, which is the whole
+// point of the A/B: see docs/trustedform-submission-event.md.
+const SUBMISSION_MODES = ['ajax', 'native'];
+
+function resolveSubmissionMode() {
+  const mode = String(arg('submission-mode', 'ajax')).toLowerCase();
+  if (!SUBMISSION_MODES.includes(mode)) {
+    throw new Error(`--submission-mode must be one of ${SUBMISSION_MODES.join('|')}, got "${mode}"`);
+  }
+  return mode;
+}
+
+function targetUrlForMode(mode) {
+  if (mode === 'ajax') return TARGET_URL;
+  const url = new URL(TARGET_URL);
+  url.searchParams.set('submission-mode', 'native');
+  return url.toString();
+}
 
 // The form's own submit handler emits MM/DD/YYYY, but the DOM control is an
 // <input type="date">, which only accepts YYYY-MM-DD via fill(). Convert here so
@@ -61,6 +93,11 @@ async function waitForTrustedFormCert(page) {
 
 async function main() {
   const { username, basePassword } = proxyCredentialsFromEnv();
+  const submissionMode = resolveSubmissionMode();
+  const pageUrl = targetUrlForMode(submissionMode);
+  // --capture <file> records everything the browser exchanges with TrustedForm,
+  // using the same listeners the production funnel runner installs.
+  const capturePath = arg('capture', null);
   const zip = required('--zip', arg('zip', process.env.TEST_ZIP));
 
   const location = getZipTarget(zip);
@@ -88,7 +125,8 @@ async function main() {
   };
 
   console.log(JSON.stringify({
-    targetUrl: TARGET_URL,
+    targetUrl: pageUrl,
+    submissionMode,
     submittedZip: location.zip,
     resolvedCity: location.city,
     resolvedState: location.state,
@@ -136,6 +174,14 @@ async function main() {
       ignoreHTTPSErrors: false,
     });
 
+    // --probe-listeners records which submit/click listeners get registered on
+    // this page and which of them actually run, so a run that produces no
+    // TrustedForm submission event can be told apart from one where the SDK
+    // never attached a handler in the first place. Off by default: it wraps
+    // addEventListener, and the A/B captures themselves must be uninstrumented.
+    const probeListeners = process.argv.includes('--probe-listeners');
+    if (probeListeners) await context.addInitScript(LISTENER_PROBE);
+
     const page = await context.newPage();
     page.setDefaultTimeout(30_000);
 
@@ -158,15 +204,44 @@ async function main() {
       console.log(`Geo target result: ${geoTargetMatch}`);
     }
 
-    await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded' });
+    const captured = capturePath ? attachTrustedFormCapture(page) : null;
+
+    await page.goto(pageUrl, { waitUntil: 'domcontentloaded' });
+
+    // Confirm the page really is running the mechanism this run asked for,
+    // before a single field is filled. Reading it back off the document means a
+    // stale deployment or a dropped query parameter fails here rather than
+    // producing a run labelled "native" that in fact ran the AJAX path.
+    const pageSubmissionMode = await page.evaluate(() => ({
+      mode: typeof SUBMISSION_MODE === 'string' ? SUBMISSION_MODE : null,
+      action: document.querySelector('#quote-form')?.getAttribute('action') || null,
+      method: document.querySelector('#quote-form')?.getAttribute('method') || null,
+    }));
+    console.log(`Page reports submission mode: ${JSON.stringify(pageSubmissionMode)}`);
+    if (pageSubmissionMode.mode !== submissionMode) {
+      throw new Error(
+        `Requested --submission-mode ${submissionMode} but the page is running `
+        + `"${pageSubmissionMode.mode}". The deployed index.html is not the A/B build.`
+      );
+    }
 
     // TrustedForm runs in this browser session, so its network observations use
     // the same residential proxy as the page and its third-party requests.
-    const trustedFormCertUrlPromise = waitForTrustedFormCert(page);
-    // Filling the form takes several seconds; keep a handler attached so a
-    // TrustedForm timeout surfaces at the await below, not as an unhandled
-    // rejection that would kill the process mid-fill.
-    trustedFormCertUrlPromise.catch(() => {});
+    //
+    // Wait for the certificate BEFORE touching a field. This used to run
+    // concurrently with the fill, and that is what made the first A/B captures
+    // unreadable: the runner began filling a few hundred milliseconds after
+    // domcontentloaded, while the SDK was still loading, and the resulting
+    // sessions recorded the page-load events and then never flushed another
+    // batch -- no field entry, no click, no submission -- even when the
+    // instrumented run proved TrustedForm's own submit handler had fired.
+    // Letting the SDK finish initialising first produces a complete event
+    // stream, and it is also closer to a real visitor, who does not start
+    // typing before the page has finished loading. Both variants do this, so
+    // the A/B stays controlled.
+    const trustedFormCertUrl = await waitForTrustedFormCert(page);
+    console.log(`TrustedForm certificate URL: ${trustedFormCertUrl}`);
+    await page.waitForTimeout(Number(process.env.AB_SDK_SETTLE_MS || 4000));
 
     await page.locator('#zip').fill(payload.zip);
     await page.locator('#gender').selectOption({ label: payload.gender });
@@ -192,17 +267,71 @@ async function main() {
     await page.locator('#email').fill(payload.email);
     await page.locator('#phone').fill(payload.phone);
 
-    const trustedFormCertUrl = await trustedFormCertUrlPromise;
-    console.log(`TrustedForm certificate URL: ${trustedFormCertUrl}`);
+    // Watch the POST to /api-proxy/ itself, so the report can state whether the
+    // request actually left the browser and how it was encoded, rather than
+    // inferring a submission from the message that appears afterwards.
+    const apiRequestPromise = page
+      .waitForRequest((req) => req.method() === 'POST' && /\/api-proxy\//.test(req.url()), { timeout: 30_000 })
+      .catch(() => null);
 
+    const submitClickedAt = new Date().toISOString();
     await page.locator('#submit-button').click();
-    await page.waitForFunction(() => {
-      const el = document.querySelector('#response-message');
-      return !!el && el.innerText.trim().length > 0;
-    }, { timeout: 30_000 });
+
+    if (submissionMode === 'native') {
+      // The browser is navigating. Waiting on the old document's DOM would race
+      // the teardown of its execution context, so wait for the navigation.
+      await page.waitForLoadState('load', { timeout: 30_000 });
+    } else {
+      await page.waitForFunction(() => {
+        const el = document.querySelector('#response-message');
+        return !!el && el.innerText.trim().length > 0;
+      }, { timeout: 30_000 });
+    }
+
+    if (probeListeners) {
+      const probe = await readListenerProbe(page);
+      console.log('');
+      console.log('-- submit/click listeners registered --');
+      for (const r of probe.registrations) {
+        console.log(`   ${r.trustedForm ? 'TRUSTEDFORM' : 'page       '}  ${r.type.padEnd(7)} on ${r.target}`);
+      }
+      console.log('-- listeners that fired --');
+      for (const f of probe.fired) {
+        console.log(`   ${f.trustedForm ? 'TRUSTEDFORM' : 'page       '}  ${f.type.padEnd(7)} on ${f.target}`
+          + `  defaultPrevented=${f.defaultPrevented}`);
+      }
+      if (!probe.fired.length) console.log('   (none fired)');
+      console.log('-- requests the page attempted to TrustedForm --');
+      for (const a of probe.attempts || []) {
+        console.log(`   ${a.via.padEnd(7)} ${a.bytes.toString().padStart(7)}b  ${a.url}`);
+      }
+      console.log('');
+    }
+
+    const apiRequest = await apiRequestPromise;
+    const apiRequestSummary = apiRequest
+      ? {
+          method: apiRequest.method(),
+          url: apiRequest.url(),
+          contentType: apiRequest.headers()['content-type'] || null,
+          // Whether the browser could attach an Authorization header at all is
+          // one of the things that differs between the two mechanisms.
+          hasAuthorizationHeader: Boolean(apiRequest.headers().authorization),
+          postDataBytes: (apiRequest.postData() || '').length,
+        }
+      : null;
+    console.log(`POST /api-proxy/ observed: ${JSON.stringify(apiRequestSummary)}`);
+
+    // TrustedForm flushes its event stream asynchronously, and the native
+    // variant tears the page down at exactly that moment. Give both variants
+    // the same settle window so neither capture is cut short relative to the
+    // other -- an unequal wait here would be a second variable.
+    const settleMs = Number(process.env.AB_SETTLE_MS || 8000);
+    await page.waitForTimeout(settleMs);
 
     const responseMessage = (await page.locator('#response-message').innerText()).trim();
     console.log(`Form response: ${responseMessage}`);
+    console.log(`Final page URL: ${page.url()}`);
 
     if (!/^✓\s*Request received/i.test(responseMessage)) {
       throw new Error(`Form submission did not report success: ${responseMessage}`);
@@ -220,10 +349,41 @@ async function main() {
     console.log(`Observed IP ISP: ${observedGeo ? observedGeo.isp : 'unknown'}`);
     console.log(`Geo Target Result: ${geoTargetMatch}`);
     console.log(`Targeting Used: ${selection.tier}`);
+    console.log(`Submission Mode: ${submissionMode}`);
+    console.log(`Page URL: ${pageUrl}`);
     console.log(`TrustedForm Certificate: ${trustedFormCertUrl}`);
+    console.log(`TrustedForm Certificate ID: ${certIdFromUrl(trustedFormCertUrl)}`);
+    console.log(`Submit Clicked At: ${submitClickedAt}`);
     console.log(`Form Response:`);
     console.log(`${responseMessage}`);
     console.log('====================================================');
+
+    if (capturePath) {
+      const count = writeCapture(capturePath, {
+        certUrl: trustedFormCertUrl,
+        observedIp,
+        observedGeo,
+        finalUrl: page.url(),
+        events: captured,
+      });
+      // Everything the comparison needs that is not a TrustedForm event lives
+      // alongside the capture, so a run is self-describing after the fact.
+      const meta = {
+        submissionMode,
+        pageUrl,
+        submitClickedAt,
+        apiRequest: apiRequestSummary,
+        responseMessage,
+        proxyProvider: PROXY_PROVIDER.id,
+        proxyIp: observedIp,
+        proxyIpLocation: observedGeo ? `${observedGeo.city}, ${observedGeo.regionName}` : null,
+        zip: location.zip,
+        city: location.city,
+        state: location.state,
+      };
+      require('fs').writeFileSync(capturePath.replace(/\.json$/, '') + '.meta.json', JSON.stringify(meta, null, 2));
+      console.log(`TrustedForm capture written to ${capturePath} (${count} events)`);
+    }
     console.log('');
     console.log('Residential-proxy TrustedForm submission completed successfully.');
   } finally {

@@ -13,6 +13,7 @@
     "submit:proxy": "node scripts/submitWithResidentialProxy.js",
     "submit:production": "node scripts/submitProductionFunnel.js",
     "behavior:test": "node scripts/behavioralTestRunner.js",
+    "tf:analyze": "node scripts/analyzeTrustedFormCapture.js",
     "test": "npm run test:unit && npm run test:api && npm run test:offline",
     "test:unit": "node test/unit.js",
     "test:api": "node test/batch-api.js",

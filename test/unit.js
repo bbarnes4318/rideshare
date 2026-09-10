@@ -19,6 +19,86 @@ function test(name, fn) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// TrustedForm event decoding (scripts/lib/tfEvents.js).
+//
+// The submission-event investigation turns on one bit read out of a capture, so
+// the decoder that reads it is checked here against payloads shaped exactly like
+// the ones the SDK sends: a zlib-deflated, base64-encoded JSON array of
+// [offsetMs, code, ...] tuples inside a {body, chunk_number, request_number}
+// envelope.
+{
+  const zlib = require('zlib');
+  const { decodeTrustedFormEvents, decodeEventBody } = require('../scripts/lib/tfEvents');
+
+  const envelope = (events, requestNumber) => ({
+    dir: 'REQ',
+    url: 'https://api.trustedform.com/certs/abc123/events',
+    post: JSON.stringify({
+      body: zlib.deflateSync(Buffer.from(JSON.stringify(events))).toString('base64'),
+      chunk_number: 0,
+      request_number: requestNumber,
+    }),
+  });
+
+  test('a deflated event body decodes back to its JSON', () => {
+    const text = decodeEventBody(zlib.deflateSync(Buffer.from('[[51,"lf",["jornaya"]]]')).toString('base64'));
+    assert.strictEqual(text, '[[51,"lf",["jornaya"]]]');
+  });
+
+  test('an uncompressed base64 event body still decodes', () => {
+    // The small first payload of a session carries encoding: "base64" and is
+    // not deflated at all; falling back rather than throwing is the point.
+    assert.strictEqual(
+      decodeEventBody(Buffer.from('[[51,"lf",["jornaya"]]]').toString('base64')),
+      '[[51,"lf",["jornaya"]]]',
+    );
+  });
+
+  test('a capture containing fs reports form_submitted true', () => {
+    const decoded = decodeTrustedFormEvents([
+      envelope([[38, 'cl', 'By clicking...']], 1),
+      envelope([[5333, 'c', 1, 2, 552], [5333, 'fs', 552, false], [5333, 'sbc', 552, false]], 2),
+    ]);
+    assert.strictEqual(decoded.formSubmitted, true);
+    assert.strictEqual(decoded.formSubmitEvents.length, 1);
+    assert.strictEqual(decoded.formSubmitEvents[0].offsetMs, 5333);
+    assert.strictEqual(decoded.consentLanguageFound, true);
+  });
+
+  test('a capture with events but no fs reports form_submitted false', () => {
+    // This is the production funnel's shape: consent language observed, no
+    // submission event anywhere in the stream.
+    const decoded = decodeTrustedFormEvents([envelope([[38, 'cl', 'By clicking...'], [40, 'k', 1, 'x']], 1)]);
+    assert.strictEqual(decoded.formSubmitted, false);
+    assert.strictEqual(decoded.consentLanguageFound, true);
+  });
+
+  test('a capture with no events POST reports form_submitted not available', () => {
+    // Absence of evidence must never be reported as evidence of absence.
+    const decoded = decodeTrustedFormEvents([
+      { dir: 'REQ', url: 'https://api.trustedform.com/certs', post: '{}' },
+    ]);
+    assert.strictEqual(decoded.formSubmitted, 'not available');
+    assert.strictEqual(decoded.consentLanguageFound, 'not available');
+  });
+
+  test('a truncated chunk still yields the events it contains', () => {
+    const truncated = {
+      dir: 'REQ',
+      url: 'https://api.trustedform.com/certs/abc123/events',
+      post: JSON.stringify({
+        body: Buffer.from('[[10,"c",1,2,552],[11,"fs",552,fal').toString('base64'),
+        chunk_number: 1,
+        request_number: 3,
+      }),
+    };
+    const decoded = decodeTrustedFormEvents([truncated]);
+    assert.strictEqual(decoded.formSubmitted, true);
+    assert.strictEqual(decoded.requestsScanned === undefined, true);
+  });
+}
+
 // The worker pool is the one thing here that cannot be checked synchronously.
 // Async cases are queued and drained at the end rather than making this whole
 // file async, so every existing test keeps running exactly as it did.
